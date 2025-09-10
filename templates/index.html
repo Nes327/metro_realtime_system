@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Metro Realtime — Route & Fare</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0b0c0f; --card:#fff; --muted:#666; --accent:#10b981; }
+    html,body{margin:0;padding:0;background:#f7f7f8;color:#111;font-family:system-ui,Segoe UI,Roboto,Arial}
+    .wrap{max-width:1000px;margin:24px auto;padding:0 16px}
+    h1{font-weight:800;letter-spacing:.5px;margin:0 0 8px}
+    .sub{color:#555;margin:0 0 18px}
+    .grid{display:grid;grid-template-columns:1fr;gap:12px}
+    @media(min-width:880px){ .grid{grid-template-columns:1fr 1fr;}}
+    .card{background:var(--card);border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.08);padding:16px}
+    label{display:block;font-size:14px;color:#444;margin:6px 0}
+    select, input[type="text"]{
+      width:100%;padding:10px 12px;border:1px solid #e3e3e7;border-radius:10px;
+      font-size:15px;background:#fff;outline:none;
+    }
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .radio{display:flex;gap:10px;align-items:center}
+    button{
+      padding:10px 14px;border-radius:12px;border:0;background:#111;color:#fff;
+      cursor:pointer;font-weight:600;letter-spacing:.3px
+    }
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .muted{color:var(--muted);font-size:14px}
+    .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#111;color:#fff;font-size:12px}
+    .path{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+    .chip{background:#111;color:#fff;border-radius:999px;padding:6px 10px;font-size:13px}
+    .arrow{opacity:.3}
+    .error{background:#ffe1e1;border:1px solid #ffc5c5;color:#8a1a1a;padding:10px;border-radius:10px}
+    .ok{background:#e9fff4;border:1px solid #b6f3d6;color:#0a6b49;padding:10px;border-radius:10px}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+    .wsbox{background:#0f1115;color:#8bf0c8;border-radius:12px;padding:10px;font-size:12px;min-height:100px;white-space:pre-wrap}
+    .split{display:grid;grid-template-columns:1fr;gap:12px}
+    @media(min-width:880px){ .split{grid-template-columns:1.2fr .8fr;}}
+    .bar{background:#e5e7eb;border-radius:8px;overflow:hidden;height:14px;margin-bottom:6px}
+    .bar > div{background:var(--accent);height:100%;width:0%}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Metro Realtime — Route Planner</h1>
+    <p class="sub">选择起点与终点，选择模式（最少站数 / 最短时间），一键规划并查看票价，并实时高亮列车进度。</p>
+
+    <div class="split">
+      <div class="card">
+        <div class="grid">
+          <div>
+            <label for="fromSel">From（起点）</label>
+            <select id="fromSel"></select>
+          </div>
+          <div>
+            <label for="toSel">To（终点）</label>
+            <select id="toSel"></select>
+          </div>
+        </div>
+
+        <div class="row" style="margin:12px 0 4px">
+          <div class="radio">
+            <input type="radio" name="mode" id="mStops" value="stops" checked />
+            <label for="mStops">最少站数 (stops)</label>
+          </div>
+          <div class="radio">
+            <input type="radio" name="mode" id="mTime" value="time" />
+            <label for="mTime">最短时间 (time)</label>
+          </div>
+          <button id="swapBtn" title="交换起终点">⇄ 交换</button>
+          <button id="planBtn">规划路线</button>
+          <button id="simBtn" style="background:#2563eb">开始模拟列车</button>
+          <button id="stopBtn" style="background:#9a3412">停止所有列车</button>
+        </div>
+
+        <p class="muted">数据来自 <span class="mono">/stations</span>、<span class="mono">/route_by_name</span>、<span class="mono">/fare_by_name</span>；实时来自 WebSocket。</p>
+
+        <div id="result" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <strong>Realtime (WebSocket)</strong>
+          <span id="wsStatus" class="pill">connecting…</span>
+        </div>
+        <div class="wsbox" id="wsLog"></div>
+        <div class="row" style="margin-top:8px">
+          <input id="wsMsg" type="text" placeholder="type to echo…" />
+          <button id="wsSend">Send</button>
+        </div>
+        <p class="muted" style="margin-top:6px">此区域仅用于确认实时通道可用；下方路线会高亮当前列车区间。</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (sel)=>document.querySelector(sel);
+    const fromSel = $('#fromSel');
+    const toSel   = $('#toSel');
+    const planBtn = $('#planBtn');
+    const swapBtn = $('#swapBtn');
+    const result  = $('#result');
+    const simBtn  = $('#simBtn');
+    const stopBtn = $('#stopBtn');
+
+    // --- 1) 加载站名 ---
+    async function loadStations(){
+      fromSel.innerHTML = '<option value="">Loading…</option>';
+      toSel.innerHTML   = '<option value="">Loading…</option>';
+      const res = await fetch('/stations');
+      const js  = await res.json();
+      const names = (js.data || []).map(s=>s.name);
+      const opts = names.map(n=>`<option value="${n}">${n}</option>`).join('');
+      fromSel.innerHTML = `<option value="">选择起点</option>` + opts;
+      toSel.innerHTML   = `<option value="">选择终点</option>` + opts;
+
+      const trySet = (sel, name)=>{
+        const opt = Array.from(sel.options).find(o=>o.value.toLowerCase()===name.toLowerCase());
+        if(opt) sel.value = opt.value;
+      };
+      trySet(fromSel, 'KLCC');
+      trySet(toSel, 'Kajang');
+    }
+
+    // --- 2) 交互：交换起终点 ---
+    swapBtn.onclick = ()=>{
+      const a = fromSel.value;
+      fromSel.value = toSel.value;
+      toSel.value = a;
+    };
+
+    function getMode(){
+      return document.querySelector('input[name="mode"]:checked').value;
+    }
+
+    function showError(msg){
+      result.innerHTML = `<div class="error">${msg}</div>`;
+    }
+
+    function showOk(html){
+      result.innerHTML = `<div class="ok">${html}
+        <div id="liveProgress" style="margin-top:12px"></div>
+      </div>`;
+    }
+
+    // --- 3) 规划路线 ---
+    planBtn.onclick = async ()=>{
+      const from = fromSel.value.trim();
+      const to   = toSel.value.trim();
+      const mode = getMode();
+
+      if(!from || !to){ showError('请选择起点与终点'); return; }
+      planBtn.disabled = true; planBtn.textContent = '规划中…';
+
+      try {
+        const rUrl = `/route_by_name?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&mode=${encodeURIComponent(mode)}`;
+        const fUrl = `/fare_by_name?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+        const [rRes, fRes] = await Promise.all([fetch(rUrl), fetch(fUrl)]);
+        const rJs = await rRes.json();
+        const fJs = await fRes.json();
+
+        if(!rRes.ok){
+          showError(`找不到路线（${from} → ${to}，mode=${mode}）`);
+        }else{
+          const path = rJs.path_names || [];
+          const chips = path.map((p,i)=> i===path.length-1
+            ? `<span class="chip">${p}</span>`
+            : `<span class="chip">${p}</span><span class="arrow">→</span>`).join(' ');
+          const timePart = (mode==='time' && rJs.total_time!=null) ? `，总时间 <b>${rJs.total_time}</b> 分钟` : '';
+          const farePart = fRes.ok && fJs.price!=null ? `，票价 <b>RM ${Number(fJs.price).toFixed(2)}</b>` : '，票价暂无';
+          showOk(
+            `从 <b>${from}</b> 到 <b>${to}</b>，模式 <code>${mode}</code>：<br>
+             途经 <b>${rJs.total_stops}</b> 站${timePart}${farePart}
+             <div class="path" id="pathChips" style="margin-top:10px">${chips}</div>`
+          );
+        }
+      } catch (e){
+        console.error(e);
+        showError('请求失败，请检查后端是否运行');
+      } finally {
+        planBtn.disabled = false; planBtn.textContent = '规划路线';
+      }
+    };
+
+    // --- 4) 模拟列车 ---
+    simBtn.onclick = async ()=>{
+      const from = fromSel.value.trim();
+      const to   = toSel.value.trim();
+      const mode = getMode();
+      if(!from || !to){ showError('请选择起点与终点'); return; }
+      simBtn.disabled = true; simBtn.textContent = '启动中…';
+      try{
+        const resp = await fetch('/simulate_train', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          // 时间模式更有意义：这里速度倍率设 6 倍（更快演示），可自行调整
+          body: JSON.stringify({ from, to, mode: 'time', speed: 6, loop: true, ping_interval: 1 })
+        });
+        const js = await resp.json();
+        if(!resp.ok){ showError('启动失败：' + (js.error || '')); }
+        else{
+          const lp = document.getElementById('liveProgress');
+          if(lp) lp.innerHTML = `<div class="muted">列车 <b>${js.train_id}</b> 已启动</div>`;
+        }
+      }catch(e){ showError('请求失败'); }
+      finally{ simBtn.disabled = false; simBtn.textContent = '开始模拟列车'; }
+    };
+
+    stopBtn.onclick = async ()=>{
+      try{
+        const list = await fetch('/trains').then(r=>r.json());
+        const ids = list.trains || [];
+        await Promise.all(ids.map(id=>fetch('/trains/'+encodeURIComponent(id), {method:'DELETE'})));
+        const lp = document.getElementById('liveProgress');
+        if(lp) lp.innerHTML = `<div class="muted">已发送停止指令</div>`;
+      }catch(e){
+        showError('停止失败');
+      }
+    };
+
+    // --- 5) WebSocket（含高亮与进度条） ---
+    (function setupWS(){
+      const logEl = $('#wsLog');
+      const st    = $('#wsStatus');
+      const input = $('#wsMsg');
+      const btn   = $('#wsSend');
+
+      const ws = new WebSocket(`ws://${location.host}/ws`);
+      const log = (t)=>{ logEl.textContent += t + "\n"; logEl.scrollTop = logEl.scrollHeight; };
+
+      ws.addEventListener('open', ()=>{ st.textContent='connected'; st.style.background='#0a6b49'; st.style.color='#fff'; log('[ws] open'); });
+      ws.addEventListener('message', (ev)=>{
+        try {
+          const js = JSON.parse(ev.data);
+          if(js.type === "train_tick"){
+            log(`[train] ${js.train_id}: ${js.origin} → ${js.dest} ${(js.progress*100).toFixed(0)}%`);
+            updateLiveProgress(js);
+          } else if(js.type === "train_status"){
+            log(`[train] ${js.train_id} ${js.status}`);
+            if(js.status === "stopped"){
+              const lp = document.getElementById('liveProgress');
+              if(lp) lp.innerHTML = "<div class='muted'>列车已停止</div>";
+            }
+          } else {
+            log('[ws] ' + ev.data);
+          }
+        } catch(e){
+          log('[ws] ' + ev.data);
+        }
+      });
+      ws.addEventListener('close', ()=>{ st.textContent='closed'; st.style.background='#999'; st.style.color='#fff'; log('[ws] close'); });
+      ws.addEventListener('error', ()=>{ st.textContent='error'; st.style.background='#b33'; st.style.color='#fff'; log('[ws] error'); });
+
+      btn.onclick = ()=>{ if(ws.readyState===1){ ws.send(input.value||''); } };
+    })();
+
+    function updateLiveProgress(js){
+      const liveBox = document.getElementById('liveProgress');
+      const pathBox = document.getElementById('pathChips');
+      if(!liveBox || !pathBox) return;
+
+      const chips = pathBox.querySelectorAll('.chip');
+      if(chips.length < 2) return;
+
+      // 重置样式
+      chips.forEach(ch=>{
+        ch.style.background = '#111';
+        ch.style.color = '#fff';
+      });
+
+      // 找到 origin/dest 在路径里的索引
+      let originIdx = -1, destIdx = -1;
+      chips.forEach((ch,i)=>{
+        const txt = ch.textContent.trim().toLowerCase();
+        if(txt===js.origin.toLowerCase()) originIdx=i;
+        if(txt===js.dest.toLowerCase())   destIdx=i;
+      });
+
+      // 高亮当前区间两端站点
+      if(originIdx>=0) { chips[originIdx].style.background = '#047857'; }
+      if(destIdx>=0)   { chips[destIdx].style.background   = '#047857'; }
+
+      // 全程进度 = 已完成段 + 当前段进度
+      const totalStops = chips.length - 1;
+      let left = Math.min(originIdx, destIdx);
+      if(left < 0) left = 0;
+      let progress = (left + Math.max(0, Math.min(1, js.progress))) / totalStops;
+      progress = Math.max(0, Math.min(1, progress));
+
+      liveBox.innerHTML = `
+        <div class="bar"><div style="width:${(progress*100).toFixed(1)}%"></div></div>
+        <div class="muted">全程进度 ${(progress*100).toFixed(1)}%</div>
+      `;
+    }
+
+    // 初始加载
+    loadStations();
+  </script>
+</body>
+</html>

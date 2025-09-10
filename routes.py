@@ -4,6 +4,11 @@ from database import get_conn, get_all_stations, get_fare_between, get_route_sho
 from realtime import start_train, stop_train, list_trains
 import time
 
+
+def _name_to_id_map(conn):
+    rows = conn.execute("SELECT station_id, name FROM stations").fetchall()
+    return {_name_key(r["name"]): int(r["station_id"]) for r in rows}
+
 api_bp = Blueprint("api", __name__)
 
 @api_bp.get("/health")
@@ -30,10 +35,6 @@ def fare():
         return jsonify({"from_id": from_id, "to_id": to_id, "price": None, "message": "fare not found"}), 404
     return jsonify({"from_id": from_id, "to_id": to_id, "price": price})
 
-# ------- helpers -------
-def _name_to_id_map(conn):
-    rows = conn.execute("SELECT station_id, name FROM stations").fetchall()
-    return {str(r["name"]).strip().lower(): int(r["station_id"]) for r in rows}
 
 @api_bp.get("/search_station")
 def search_station():

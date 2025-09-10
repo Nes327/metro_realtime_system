@@ -199,6 +199,92 @@ def import_fares(conn: sqlite3.Connection, data_dir: str) -> int:
 # ---------------- 导入：路线（Route.csv + Time.csv） ----------------
 def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     """
+    只使用 Route.csv 的第一行作为整条线的站序，连相邻边（双向）；
+    用 Time.csv（矩阵）给每段补 travel_time_min。
+    """
+    route_csv = _csv_path(data_dir, "Route.csv")
+    if not route_csv or not os.path.exists(route_csv):
+        print("[routes] Route.csv not found, skip.")
+        return 0
+
+    time_csv = _csv_path(data_dir, "Time.csv")
+
+    # name -> id（归一化）
+    name_to_id: Dict[str, int] = {}
+    for r in conn.execute("SELECT station_id, name FROM stations"):
+        name_to_id[_name_key(r["name"])] = int(r["station_id"])
+
+    def id_of(nm: str) -> Optional[int]:
+        return name_to_id.get(_name_key(nm))
+
+    # ---------- 只读第一行 ----------
+    with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        first_row = next(reader, [])
+        seq = [c.strip() for c in first_row if c and c.strip()]
+    if len(seq) < 2:
+        print("[routes] Route.csv first row too short.")
+        return 0
+
+    # 构建相邻边（双向）
+    edges: Set[Tuple[int, int]] = set()
+    for a, b in zip(seq, seq[1:]):
+        u, v = id_of(a), id_of(b)
+        if not u or not v:
+            # print("[routes] name not found in first row:", a, b)
+            continue
+        edges.add((u, v))
+        edges.add((v, u))
+
+    if not edges:
+        print("[routes] No edges from first row.")
+        return 0
+
+    # ---------- 如果有 Time.csv：做 (origin_key, dest_key) -> 分钟 的映射 ----------
+    time_map: Dict[Tuple[str, str], float] = {}
+    if time_csv and os.path.exists(time_csv):
+        with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
+            treader = csv.reader(tf)
+            theader = next(treader, [])
+            dest_names = [h.strip() for h in theader[1:] if h and h.strip()]
+            dest_keys  = [_name_key(h) for h in dest_names]
+            for row in treader:
+                if not row:
+                    continue
+                oname = (row[0] or "").strip()
+                if not oname:
+                    continue
+                okey = _name_key(oname)
+                for j, dkey in enumerate(dest_keys, start=1):
+                    if j >= len(row):
+                        continue
+                    cell = str(row[j]).strip()
+                    if not cell or cell in {"-", "NA", "N/A"}:
+                        continue
+                    try:
+                        t = float(cell)
+                    except ValueError:
+                        continue
+                    time_map[(okey, dkey)] = t
+
+    # ---------- 写入 routes ----------
+    rows = []
+    DEFAULT_MIN = 1.0  # 没查到分钟时给个兜底，供 Dijkstra 用
+    sel_name = "SELECT name FROM stations WHERE station_id=?"
+    for u, v in edges:
+        on = conn.execute(sel_name, (u,)).fetchone()["name"]
+        dn = conn.execute(sel_name, (v,)).fetchone()["name"]
+        tmin = time_map.get((_name_key(on), _name_key(dn)))
+        w = float(tmin) if (tmin is not None and tmin > 0) else DEFAULT_MIN
+        rows.append((u, v, w))
+
+    conn.executemany(
+        "INSERT OR REPLACE INTO routes(from_id, to_id, travel_time_min) VALUES (?,?,?)",
+        rows
+    )
+    print(f"[routes] imported edges from first row (directed): {len(rows)}")
+    return len(rows)
+    """
     读取 Route.csv（线路站序列表）并连成相邻边；用 Time.csv（矩阵）填每段 travel_time_min。
 
     Route.csv 支持两种“序列”写法：

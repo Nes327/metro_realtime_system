@@ -417,6 +417,12 @@ def init_db(db_path: str, data_dir: str):
             print(f"[routes] total imported: {imported_r}")
         else:
             print(f"[routes] already has {r} rows")
+                # 最后：尝试导入站点坐标（如果有文件）
+        try:
+            _ = update_station_coords_from_files(conn, data_dir)
+        except Exception as e:
+            print("[coords] 导入失败：", e)
+
 
 # ---------------- 查询 ----------------
 def get_all_stations(conn: sqlite3.Connection):
@@ -516,3 +522,87 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
 
     # 未知模式
     return None
+
+# === 坐标导入：支持 CSV 或 XLSX ===
+def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) -> int:
+    """
+    在 data_dir 下寻找以下任意一个文件并导入坐标：
+      - stations_coords.csv（表头: name, latitude, longitude）
+      - Station.xlsx      （Sheet1 或第一个sheet，表头同上）
+    以 name 做匹配（用 _name_key 归一化），更新 stations.latitude/longitude。
+    返回成功更新的行数。
+    """
+    import_path_csv  = os.path.join(data_dir, "stations_coords.csv")
+    import_path_xlsx = os.path.join(data_dir, "Station.xlsx")
+
+    rows = []
+    src  = None
+
+    if os.path.exists(import_path_csv):
+        # 读 CSV
+        with open(import_path_csv, "r", encoding="utf-8-sig", newline="") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                name = (row.get("name") or "").strip()
+                lat  = row.get("latitude")
+                lng  = row.get("longitude")
+                if not name or lat in (None, "") or lng in (None, ""):
+                    continue
+                try:
+                    rows.append((_name_key(name), float(lat), float(lng)))
+                except ValueError:
+                    pass
+        src = "csv"
+
+    elif os.path.exists(import_path_xlsx):
+        # 读 XLSX（需要 pandas+openpyxl）
+        try:
+            import pandas as pd
+            df = pd.read_excel(import_path_xlsx)
+            # 兼容列名大小写/空格
+            cols = {c.strip().lower(): c for c in df.columns if isinstance(c, str)}
+            need = ("name", "latitude", "longitude")
+            if not all(k in cols for k in need):
+                print("[coords] Station.xlsx 缺少表头 name/latitude/longitude，跳过")
+                return 0
+            for _, r in df.iterrows():
+                name = str(r[cols["name"]]).strip() if pd.notna(r[cols["name"]]) else ""
+                lat  = r[cols["latitude"]]
+                lng  = r[cols["longitude"]]
+                if not name or pd.isna(lat) or pd.isna(lng):
+                    continue
+                try:
+                    rows.append((_name_key(name), float(lat), float(lng)))
+                except Exception:
+                    pass
+            src = "xlsx"
+        except Exception as e:
+            print("[coords] 读取 Station.xlsx 失败：", e)
+            return 0
+    else:
+        # 没找到文件，不报错
+        return 0
+
+    if not rows:
+        print(f"[coords] {src} 文件未读取到有效行")
+        return 0
+
+    # 先把 stations 中的 (key -> station_id) 做个索引
+    name_to_id = {}
+    for r in conn.execute("SELECT station_id, name FROM stations"):
+        name_to_id[_name_key(r["name"])] = int(r["station_id"])
+
+    updated = 0
+    for k, lat, lng in rows:
+        sid = name_to_id.get(k)
+        if not sid:
+            # 没匹配到也可以提示一下，方便修正名字
+            # print("[coords] 未匹配到站名：", k)
+            continue
+        conn.execute(
+            "UPDATE stations SET latitude=?, longitude=? WHERE station_id=?",
+            (lat, lng, sid)
+        )
+        updated += 1
+    print(f"[coords] updated rows: {updated} (from {src})")
+    return updated

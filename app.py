@@ -6,26 +6,29 @@ from database import init_db
 
 def create_app():
     app = Flask(__name__)
-    # 配置
     app.config["DB_PATH"] = "metro.db"
     app.config["DATA_DIR"] = "data"
 
-    # API 路由
+    # 注册 REST API
     app.register_blueprint(api_bp, url_prefix="/")
 
-    # 主页（前端）
+    # 首页：渲染 templates/index.html
     @app.route("/")
     def index():
         return render_template("index.html")
 
-    # 初始化数据库（只在启动时做一次）
+    # （可选）安静掉浏览器请求的 service worker
+    @app.route("/service-worker.js")
+    def sw():
+        # 如果你以后真的要用 SW，把一个同名文件放到 static/ 下即可
+        return ("", 204, {"Content-Type": "application/javascript"})
+
+    # 初始化 DB & WebSocket
     init_db(app.config["DB_PATH"], app.config["DATA_DIR"])
+    init_realtime(app)
 
     return app
 
 if __name__ == "__main__":
     app = create_app()
-    # 初始化 Socket.IO（确保 realtime.init_realtime 返回 socketio 实例）
-    socketio = init_realtime(app)
-    # 用 socketio.run 运行（不要再用 app.run）
-    socketio.run(app, host="127.0.0.1", port=5000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=True)

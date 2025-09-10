@@ -1,3 +1,4 @@
+# app.py
 from flask import Flask, render_template
 from routes import api_bp
 from realtime import init_realtime
@@ -5,25 +6,26 @@ from database import init_db
 
 def create_app():
     app = Flask(__name__)
-    # 配置：数据库路径 & CSV 路径（后续 database.py 会用到）
+    # 配置
     app.config["DB_PATH"] = "metro.db"
-    app.config["DATA_DIR"] = "data"  # 你的 CSV 文件夹，如 data/Fare.csv
+    app.config["DATA_DIR"] = "data"
 
-    init_db(app.config["DB_PATH"], app.config["DATA_DIR"])
-
-    # 注册 REST API
+    # API 路由
     app.register_blueprint(api_bp, url_prefix="/")
 
-    # 初始化 WebSocket（/ws）
-    init_realtime(app)
-
+    # 主页（前端）
     @app.route("/")
     def index():
         return render_template("index.html")
-    
+
+    # 初始化数据库（只在启动时做一次）
+    init_db(app.config["DB_PATH"], app.config["DATA_DIR"])
+
     return app
 
 if __name__ == "__main__":
     app = create_app()
-    # 开发模式运行
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    # 初始化 Socket.IO（确保 realtime.init_realtime 返回 socketio 实例）
+    socketio = init_realtime(app)
+    # 用 socketio.run 运行（不要再用 app.run）
+    socketio.run(app, host="127.0.0.1", port=5000, debug=True)

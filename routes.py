@@ -5,7 +5,7 @@ from realtime import start_train, stop_train, list_trains
 from database import _name_key
 import time
 
-
+# Helper: map station name -> id
 def _name_to_id_map(conn):
     rows = conn.execute("SELECT station_id, name FROM stations").fetchall()
     return {_name_key(r["name"]): int(r["station_id"]) for r in rows}
@@ -35,7 +35,6 @@ def fare():
     if price is None:
         return jsonify({"from_id": from_id, "to_id": to_id, "price": None, "message": "fare not found"}), 404
     return jsonify({"from_id": from_id, "to_id": to_id, "price": price})
-
 
 @api_bp.get("/search_station")
 def search_station():
@@ -112,20 +111,20 @@ def route_by_name():
         "total_stops": res["total_stops"], "total_time": res["total_time"]
     })
 
-# ======= 模拟列车 REST =======
+# ======= Train Simulation REST =======
 @api_bp.post("/simulate_train")
 def simulate_train():
     """
-    按 Time.csv（已导入 routes.travel_time_min）逐段模拟列车。
+    Simulate train movement based on Time.csv (routes.travel_time_min).
     Body(JSON):
       {
-        "train_id": "Train-1",   // 可选
+        "train_id": "Train-1",   // optional
         "from": "KLCC",
         "to": "Kajang",
-        "mode": "time",          // 建议用 'time'
-        "speed": 1.0,            // 速度倍率：1 = 真实时间；>1 更快；<1 更慢
-        "loop": true,            // 是否往返
-        "ping_interval": 1.0     // 每隔多少秒广播一次进度
+        "mode": "time",
+        "speed": 1.0,
+        "loop": true,
+        "ping_interval": 1.0
       }
     """
     data = request.get_json(silent=True) or {}
@@ -147,32 +146,27 @@ def simulate_train():
     db_path = current_app.config["DB_PATH"]
 
     with get_conn(db_path) as conn:
-        # 1) 站名 -> id
         n2i = _name_to_id_map(conn)
         from_id = n2i.get(from_name)
         to_id   = n2i.get(to_name)
         if from_id is None or to_id is None:
             return jsonify(error="station name not found"), 404
 
-        # 2) 求路径（用你选的 mode）
         res = get_route_shortest(conn, from_id, to_id, mode=mode)
         if not res:
             return jsonify(error="route not found"), 404
         path_names = res["path_names"]
         path_ids   = res["path_ids"]
 
-        # 3) 严格逐段取 routes.travel_time_min（Time.csv 导入）
         per_edge_seconds = []
-        DEFAULT_EDGE_SEC = 8.0  # 若缺时长，兜底
+        DEFAULT_EDGE_SEC = 8.0
         for i in range(len(path_ids) - 1):
             a, b = int(path_ids[i]), int(path_ids[i+1])
-
             row = conn.execute(
                 "SELECT travel_time_min FROM routes WHERE from_id=? AND to_id=?",
                 (a, b)
             ).fetchone()
             if not row:
-                # 容错：有些数据只存了对向
                 row = conn.execute(
                     "SELECT travel_time_min FROM routes WHERE from_id=? AND to_id=?",
                     (b, a)
@@ -183,12 +177,10 @@ def simulate_train():
             if t_min is None or t_min <= 0:
                 sec = DEFAULT_EDGE_SEC
             else:
-                # 严格按 Time.csv 的分钟数，按 speed 做倍率缩放
                 sec = max(1.0, (t_min * 60.0) / max(0.1, speed))
 
             per_edge_seconds.append(sec)
 
-    # 4) 启动后台列车（逐段秒数完全由 Time.csv 决定）
     start_train(
         train_id,
         path_names,
@@ -211,8 +203,8 @@ def trains_stop(train_id):
 @api_bp.get("/edge_times_by_name")
 def edge_times_by_name():
     """
-    用站名查看一条路径上每一段的 travel_time_min（分钟），用于校验是否和 Time.csv 一致。
-    例：/edge_times_by_name?from=KLCC&to=Kajang&mode=time
+    Show per-segment travel_time_min (minutes) for a route by station names.
+    Example: /edge_times_by_name?from=KLCC&to=Kajang&mode=time
     """
     from_name = (request.args.get("from") or "").strip().lower()
     to_name   = (request.args.get("to") or "").strip().lower()
@@ -257,7 +249,6 @@ def edge_times_by_name():
             })
 
     return jsonify(path=path_names, segments=segs)
-
 
 @api_bp.get("/debug/neighbors")
 def debug_neighbors():

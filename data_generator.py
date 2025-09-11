@@ -6,7 +6,7 @@ from websocket import create_connection
 
 WS_URL = "ws://127.0.0.1:5000/ws"
 
-# 你可以改成任意两个站，或循环更多站。这里为了演示简单取 KLCC ↔ Cochrane
+# Demo route segments (you can change these to any stations or a longer loop)
 ROUTE = [
     ("KLCC", "Kampung Baru"),
     ("Kampung Baru", "Dang Wangi"),
@@ -19,7 +19,7 @@ ROUTE = [
 ]
 
 def main():
-    # 连接 WebSocket（你的 Flask 后端 realtime.py 暴露的 /ws）
+    # Connect to WebSocket (/ws exposed by Flask backend)
     print(f"[generator] connecting to {WS_URL} ...")
     ws = create_connection(WS_URL)
     print("[generator] connected.")
@@ -28,7 +28,7 @@ def main():
     print(f"[generator] simulate {train_id}")
 
     try:
-        # 循环往返
+        # Ping-pong loop (forward/backward)
         forward = True
         idx = 0
         progress = 0.0
@@ -38,34 +38,33 @@ def main():
             else:
                 origin, dest = ROUTE[len(ROUTE) - 1 - idx][1], ROUTE[len(ROUTE) - 1 - idx][0]
 
-            # 每个区段内，从 0~1 慢慢前进，步长随机（2~5秒一次）
+            # Within a segment, move from 0->1 with random step every 2–5 seconds
             step = random.uniform(0.15, 0.35)
             progress += step
             if progress >= 1.0:
                 progress = 1.0
 
             payload = {
-                "type": "train_update",   # 后端会识别并广播
+                "type": "train_update",   # recognized and broadcast by the backend
                 "train_id": train_id,
                 "from": origin,
                 "to": dest,
-                # 这里没有用经纬度，因为你的 CSV 暂时没有坐标。
-                # 如果你后续在 stations 表里补了 latitude/longitude，
-                # 前端会用它们绘制 marker 和 polyline。
+                # No lat/lng here; if stations table has latitude/longitude,
+                # the frontend will render markers/polyline using those.
                 "progress": progress
             }
             ws.send(json.dumps(payload))
             print("[generator] sent:", payload)
 
             if progress >= 1.0:
-                # 切到下一个区段
+                # Move to next segment
                 progress = 0.0
                 idx += 1
                 if idx >= len(ROUTE):
                     idx = 0
                     forward = not forward
 
-            # 每 2~5 秒发一次
+            # Send every 2–5 seconds
             time.sleep(random.uniform(2.0, 5.0))
     finally:
         ws.close()

@@ -9,21 +9,21 @@ def create_app():
     app.config["DB_PATH"] = "metro.db"
     app.config["DATA_DIR"] = "data"
 
-    # 注册 REST API
+    # Register REST API
     app.register_blueprint(api_bp, url_prefix="/")
 
-    # 首页：渲染 templates/index.html
+    # Home page: render templates/index.html
     @app.route("/")
     def index():
         return render_template("index.html")
 
-    # （可选）安静掉浏览器请求的 service worker
+    # Optional: handle service worker requests quietly
     @app.route("/service-worker.js")
     def sw():
-        # 如果你以后真的要用 SW，把一个同名文件放到 static/ 下即可
+        # If you really want to use SW later, put the file in static/
         return ("", 204, {"Content-Type": "application/javascript"})
 
-    # 初始化 DB & WebSocket
+    # Init DB & WebSocket
     init_db(app.config["DB_PATH"], app.config["DATA_DIR"])
     init_realtime(app)
 

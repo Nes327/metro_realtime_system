@@ -11,7 +11,7 @@ import re
 PAREN = re.compile(r"\s*\([^)]*\)\s*")
 
 def _name_key(s: str) -> str:
-    """统一站名：去括号、合并空白、lower、统一撇号"""
+    """Normalize station name: drop parentheses, collapse spaces, lower, unify apostrophe"""
     if s is None:
         return ""
     s = PAREN.sub("", str(s))
@@ -28,7 +28,7 @@ def get_conn(db_path: str):
     finally:
         conn.close()
 
-# ---------------- 小工具 ----------------
+# ---------------- Utilities ----------------
 def _norm(s: str) -> str:
     return (s or "").strip().lower().replace(" ", "_")
 
@@ -58,7 +58,7 @@ def _to_float(x) -> Optional[float]:
 def _ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
 
-# ---------------- 表结构 ----------------
+# ---------------- DDL ----------------
 DDL = """
 CREATE TABLE IF NOT EXISTS stations (
     station_id   INTEGER PRIMARY KEY,
@@ -92,7 +92,7 @@ CREATE INDEX IF NOT EXISTS idx_routes_to   ON routes(to_id);
 def _create_tables(conn: sqlite3.Connection):
     conn.executescript(DDL)
 
-# ---------------- 读取 CSV 辅助 ----------------
+# ---------------- CSV helpers ----------------
 def _csv_path(data_dir: str, filename: str) -> Optional[str]:
     p = os.path.join(data_dir, filename)
     return p if os.path.exists(p) else None
@@ -109,12 +109,12 @@ def _read_header_row_only(path: str) -> Optional[list]:
         header = [h.strip() for h in header if h and h.strip()]
         return header
 
-# ---------------- 导入：车站 ----------------
+# ---------------- Import: stations ----------------
 def import_stations(conn: sqlite3.Connection, data_dir: str) -> int:
     fare_csv = _csv_path(data_dir, "Fare.csv")
     names: Set[str] = set()
 
-    # 从 Fare.csv 的首列/表头收集站名
+    # Collect station names from Fare.csv first column/header
     if fare_csv and os.path.exists(fare_csv):
         with open(fare_csv, "r", encoding="utf-8-sig", newline="") as f:
             reader = csv.reader(f)
@@ -126,7 +126,7 @@ def import_stations(conn: sqlite3.Connection, data_dir: str) -> int:
                 if h.strip():
                     names.add(h.strip())
 
-    # 兜底：从 Route/Time 的表头补站名
+    # Fallback: add names from headers of Route/Time
     if not names:
         for alt in ("Route.csv", "Time.csv"):
             hdr = _read_header_row_only(_csv_path(data_dir, alt))
@@ -144,7 +144,7 @@ def import_stations(conn: sqlite3.Connection, data_dir: str) -> int:
     )
     return len(rows)
 
-# ---------------- 导入：票价（矩阵） ----------------
+# ---------------- Import: fares (matrix) ----------------
 def import_fares(conn: sqlite3.Connection, data_dir: str) -> int:
     fare_csv = _csv_path(data_dir, "Fare.csv")
     if not fare_csv:
@@ -196,11 +196,11 @@ def import_fares(conn: sqlite3.Connection, data_dir: str) -> int:
     print(f"[fares] imported rows: {len(rows)}")
     return len(rows)
 
-# ---------------- 导入：路线（Route.csv + Time.csv） ----------------
+# ---------------- Import: routes (Route.csv + Time.csv) ----------------
 def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     """
-    只使用 Route.csv 的第一行作为整条线的站序，连相邻边（双向）；
-    用 Time.csv（矩阵）给每段补 travel_time_min。
+    Use only the first row of Route.csv as the full line sequence and connect adjacent pairs (bidirectional);
+    use Time.csv (matrix) to fill travel_time_min for each segment.
     """
     route_csv = _csv_path(data_dir, "Route.csv")
     if not route_csv or not os.path.exists(route_csv):
@@ -209,7 +209,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
 
     time_csv = _csv_path(data_dir, "Time.csv")
 
-    # name -> id（归一化）
+    # name -> id (normalized)
     name_to_id: Dict[str, int] = {}
     for r in conn.execute("SELECT station_id, name FROM stations"):
         name_to_id[_name_key(r["name"])] = int(r["station_id"])
@@ -217,7 +217,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     def id_of(nm: str) -> Optional[int]:
         return name_to_id.get(_name_key(nm))
 
-    # ---------- 只读第一行 ----------
+    # ---------- read only first row ----------
     with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.reader(f)
         first_row = next(reader, [])
@@ -226,7 +226,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
         print("[routes] Route.csv first row too short.")
         return 0
 
-    # 构建相邻边（双向）
+    # Build adjacent edges (bidirectional)
     edges: Set[Tuple[int, int]] = set()
     for a, b in zip(seq, seq[1:]):
         u, v = id_of(a), id_of(b)
@@ -240,7 +240,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
         print("[routes] No edges from first row.")
         return 0
 
-    # ---------- 如果有 Time.csv：做 (origin_key, dest_key) -> 分钟 的映射 ----------
+    # ---------- If Time.csv exists: build (origin_key, dest_key) -> minutes map ----------
     time_map: Dict[Tuple[str, str], float] = {}
     if time_csv and os.path.exists(time_csv):
         with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
@@ -267,9 +267,9 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
                         continue
                     time_map[(okey, dkey)] = t
 
-    # ---------- 写入 routes ----------
+    # ---------- write into routes ----------
     rows = []
-    DEFAULT_MIN = 1.0  # 没查到分钟时给个兜底，供 Dijkstra 用
+    DEFAULT_MIN = 1.0  # fallback minutes when missing, used by Dijkstra weight only
     sel_name = "SELECT name FROM stations WHERE station_id=?"
     for u, v in edges:
         on = conn.execute(sel_name, (u,)).fetchone()["name"]
@@ -285,15 +285,15 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     print(f"[routes] imported edges from first row (directed): {len(rows)}")
     return len(rows)
     """
-    读取 Route.csv（线路站序列表）并连成相邻边；用 Time.csv（矩阵）填每段 travel_time_min。
+    Read Route.csv (line sequences) and connect adjacent pairs; fill each segment's travel_time_min using Time.csv (matrix).
 
-    Route.csv 支持两种“序列”写法：
-    - 逗号分隔的一整行：Gombak,Taman Melati,Wangsa Maju,...,KLCC,...
-    - 或含括号/箭头：KJL [ Taman Melati > Wangsa Maju > ... > KLCC > ... ]
+    Route.csv supports two sequence formats:
+    - A whole comma-separated row: Gombak,Taman Melati,Wangsa Maju,...,KLCC,...
+    - Or a bracket/arrow form: KJL [ Taman Melati > Wangsa Maju > ... > KLCC > ... ]
 
-    Time.csv 假设是“矩阵”：
-    - 第一行是列目的地站名（第一格常为空），首列是行起点站名
-    - 单元格为分钟（可含空白/“-”表示无值）
+    Time.csv is assumed a matrix:
+    - First row = destination column headers (first cell often blank), first column = origin station names
+    - Cell = minutes (blank/"-" means missing)
     """
     route_csv = _csv_path(data_dir, "Route.csv")
     if not route_csv or not os.path.exists(route_csv):
@@ -302,7 +302,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
 
     time_csv = _csv_path(data_dir, "Time.csv")
 
-    # ---- 站名 -> id（归一化） ----
+    # ---- name -> id (normalized) ----
     name_to_id: Dict[str, int] = {}
     for r in conn.execute("SELECT station_id, name FROM stations"):
         name_to_id[_name_key(r["name"])] = int(r["station_id"])
@@ -310,7 +310,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     def id_of(nm: str) -> Optional[int]:
         return name_to_id.get(_name_key(nm))
 
-    # ---- 解析 Route.csv：每行一条线路的站序，连相邻边（双向）----
+    # ---- Parse Route.csv: each row is a line sequence; connect adjacent edges (bidirectional) ----
     edges: Set[Tuple[int, int]] = set()
 
     with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
@@ -321,12 +321,12 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
             if not row_text:
                 continue
 
-            # 1) 兼容  [ A > B > ... ] 形式
+            # 1) Support [ A > B > ... ] form
             m = re.search(r"\[(.+?)\]", row_text)
             if m and ">" in m.group(1):
                 seq = [p.strip() for p in m.group(1).split(">") if p.strip()]
             else:
-                # 2) 否则按逗号分隔的整行
+                # 2) Else treat as a comma-separated row
                 seq = [c.strip() for c in raw_row if c and c.strip()]
 
             if len(seq) < 2:
@@ -344,7 +344,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
         print("[routes] No edges parsed from Route.csv.")
         return 0
 
-    # ---- 如果有 Time.csv：建立 (origin_key, dest_key) -> 分钟 的映射 ----
+    # ---- If Time.csv exists: build (origin_key, dest_key) -> minutes ----
     time_map: Dict[Tuple[str, str], float] = {}
     if time_csv and os.path.exists(time_csv):
         with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
@@ -371,9 +371,9 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
                         continue
                     time_map[(okey, dkey)] = t
 
-    # ---- 写入 routes ----
+    # ---- Write into routes ----
     rows = []
-    DEFAULT_MIN = 1.0  # 查不到分钟时的默认值（仅用于 Dijkstra 权重）
+    DEFAULT_MIN = 1.0  # default minutes when not found (for Dijkstra weight only)
     select_name = "SELECT name FROM stations WHERE station_id=?"
 
     for u, v in edges:
@@ -390,7 +390,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     print(f"[routes] imported edges (sequence mode, directed): {len(rows)}")
     return len(rows)
 
-# ---------------- 一键初始化 ----------------
+# ---------------- DB init (one-shot) ----------------
 def init_db(db_path: str, data_dir: str):
     _ensure_dir(os.path.dirname(db_path) or ".")
     _ensure_dir(data_dir)
@@ -417,14 +417,14 @@ def init_db(db_path: str, data_dir: str):
             print(f"[routes] total imported: {imported_r}")
         else:
             print(f"[routes] already has {r} rows")
-                # 最后：尝试导入站点坐标（如果有文件）
+                # Finally: try importing station coordinates if files exist
         try:
             _ = update_station_coords_from_files(conn, data_dir)
         except Exception as e:
-            print("[coords] 导入失败：", e)
+            print("[coords] import failed:", e)
 
 
-# ---------------- 查询 ----------------
+# ---------------- Queries ----------------
 def get_all_stations(conn: sqlite3.Connection):
     cur = conn.execute("SELECT station_id, name, latitude, longitude FROM stations ORDER BY station_id")
     return [dict(r) for r in cur.fetchall()]
@@ -437,14 +437,14 @@ def get_fare_between(conn: sqlite3.Connection, origin_id: int, destination_id: i
     row = cur.fetchone()
     return float(row["price"]) if row else None
 
-# ---------------- 路线规划：最短站数 / 最短时间 ----------------
+# ---------------- Routing: min stops / min time ----------------
 def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id: int, mode: str = "stops"):
     """
-    mode = 'stops' 使用 BFS（每条边权重=1）
-    mode = 'time'  使用 Dijkstra（边权重=travel_time_min；若为NULL/<=0，按1）
-    返回: dict(path_ids=[...], path_names=[...], total_stops=int, total_time=float|None)
+    mode = 'stops' -> BFS (edge weight = 1)
+    mode = 'time'  -> Dijkstra (edge weight = travel_time_min; if NULL/<=0, use 1)
+    Return: dict(path_ids=[...], path_names=[...], total_stops=int, total_time=float|None)
     """
-    # 读取图
+    # Build graph
     adj: Dict[int, List[Tuple[int, float]]] = defaultdict(list)
     cur = conn.execute("SELECT from_id, to_id, COALESCE(travel_time_min, 1) AS w FROM routes")
     for row in cur.fetchall():
@@ -458,7 +458,7 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
     if origin_id not in id2name or destination_id not in id2name:
         return None
 
-    # BFS（最少站数）
+    # BFS (min stops)
     if mode == "stops":
         q = deque([origin_id])
         prev = {origin_id: None}
@@ -472,7 +472,7 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
                     q.append(v)
         if destination_id not in prev:
             return None
-        # 回溯路径
+        # Reconstruct path
         path = []
         x = destination_id
         while x is not None:
@@ -486,7 +486,7 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
             "total_time": None
         }
 
-    # Dijkstra（最短时间）
+    # Dijkstra (min time)
     if mode == "time":
         dist = {origin_id: 0.0}
         prev = {origin_id: None}
@@ -506,7 +506,7 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
 
         if destination_id not in prev and destination_id != origin_id:
             return None
-        # 回溯路径
+        # Reconstruct path
         path = []
         x = destination_id
         while x is not None:
@@ -520,17 +520,17 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
             "total_time": float(dist.get(destination_id, 0.0))
         }
 
-    # 未知模式
+    # Unknown mode
     return None
 
-# === 坐标导入：支持 CSV 或 XLSX ===
+# === Coordinate import: CSV or XLSX ===
 def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) -> int:
     """
-    在 data_dir 下寻找以下任意一个文件并导入坐标：
-      - stations_coords.csv（表头: name, latitude, longitude）
-      - Station.xlsx      （Sheet1 或第一个sheet，表头同上）
-    以 name 做匹配（用 _name_key 归一化），更新 stations.latitude/longitude。
-    返回成功更新的行数。
+    Look for either of the following files under data_dir and import coordinates:
+      - stations_coords.csv (headers: name, latitude, longitude)
+      - Station.xlsx        (Sheet1 or first sheet; same headers)
+    Match by 'name' (normalized via _name_key), update stations.latitude/longitude.
+    Return number of updated rows.
     """
     import_path_csv  = os.path.join(data_dir, "stations_coords.csv")
     import_path_xlsx = os.path.join(data_dir, "Station.xlsx")
@@ -539,7 +539,7 @@ def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) ->
     src  = None
 
     if os.path.exists(import_path_csv):
-        # 读 CSV
+        # Read CSV
         with open(import_path_csv, "r", encoding="utf-8-sig", newline="") as f:
             r = csv.DictReader(f)
             for row in r:
@@ -555,15 +555,15 @@ def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) ->
         src = "csv"
 
     elif os.path.exists(import_path_xlsx):
-        # 读 XLSX（需要 pandas+openpyxl）
+        # Read XLSX (requires pandas+openpyxl)
         try:
             import pandas as pd
             df = pd.read_excel(import_path_xlsx)
-            # 兼容列名大小写/空格
+            # Tolerate header case/spacing
             cols = {c.strip().lower(): c for c in df.columns if isinstance(c, str)}
             need = ("name", "latitude", "longitude")
             if not all(k in cols for k in need):
-                print("[coords] Station.xlsx 缺少表头 name/latitude/longitude，跳过")
+                print("[coords] Station.xlsx missing headers name/latitude/longitude, skip")
                 return 0
             for _, r in df.iterrows():
                 name = str(r[cols["name"]]).strip() if pd.notna(r[cols["name"]]) else ""
@@ -577,17 +577,17 @@ def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) ->
                     pass
             src = "xlsx"
         except Exception as e:
-            print("[coords] 读取 Station.xlsx 失败：", e)
+            print("[coords] failed to read Station.xlsx:", e)
             return 0
     else:
-        # 没找到文件，不报错
+        # No file found; silently return
         return 0
 
     if not rows:
-        print(f"[coords] {src} 文件未读取到有效行")
+        print(f"[coords] no valid rows in {src} file")
         return 0
 
-    # 先把 stations 中的 (key -> station_id) 做个索引
+    # Build (key -> station_id) index from stations
     name_to_id = {}
     for r in conn.execute("SELECT station_id, name FROM stations"):
         name_to_id[_name_key(r["name"])] = int(r["station_id"])
@@ -596,8 +596,8 @@ def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) ->
     for k, lat, lng in rows:
         sid = name_to_id.get(k)
         if not sid:
-            # 没匹配到也可以提示一下，方便修正名字
-            # print("[coords] 未匹配到站名：", k)
+            # Not matched; could log if needed
+            # print("[coords] station name not matched:", k)
             continue
         conn.execute(
             "UPDATE stations SET latitude=?, longitude=? WHERE station_id=?",

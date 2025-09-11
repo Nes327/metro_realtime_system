@@ -9,45 +9,45 @@ from flask_sock import Sock
 
 sock = Sock()
 
-# 维护连接的 WebSocket 客户端
+# Connected WebSocket clients
 _clients_lock = threading.Lock()
 _clients: List[Any] = []
 
 def init_realtime(app):
     """
-    初始化 WebSocket 路由 /ws
-    - 前端或 data_generator.py 连接此地址
-    - 服务端会广播来自后台模拟器或外部脚本的 train 更新
+    Initialize WebSocket route /ws
+    - Frontend or data_generator.py connects to this endpoint
+    - Server broadcasts train updates from the built-in simulator or external scripts
     """
     sock.init_app(app)
 
     @sock.route('/ws')
     def ws_handler(ws):
-        # 注册
+        # Register client
         with _clients_lock:
             _clients.append(ws)
         try:
-            # 告知客户端已连接
+            # Greet on connect
             ws.send(json.dumps({"type": "hello", "msg": "hello from server (train realtime ready)"}))
             while True:
-                # 等待客户端消息（可能是普通 echo，也可能是 data_generator.py 发来的 train_update）
+                # Wait for client message (plain echo or train_update from data_generator.py)
                 msg = ws.receive()
                 if msg is None:
                     break
-                # 如果是纯文本，尽量解析 JSON
+                # Try parse JSON if it's plain text
                 try:
                     js = json.loads(msg)
-                    # 若是 data_generator.py 推送的通用格式： type = "train_update"
+                    # Broadcast if it is the generic format: type = "train_update"
                     if isinstance(js, dict) and js.get("type") == "train_update":
-                        _broadcast(js)  # 直接广播给所有连接（包括前端）
+                        _broadcast(js)  # broadcast to all clients (including frontend)
                     else:
-                        # 其他消息就原样 echo 回去，便于调试
+                        # Echo for debugging
                         ws.send(msg)
                 except Exception:
-                    # 非 JSON，原样 echo
+                    # Non-JSON, echo back
                     ws.send(msg)
         finally:
-            # 注销
+            # Unregister client
             with _clients_lock:
                 if ws in _clients:
                     _clients.remove(ws)
@@ -56,7 +56,7 @@ def init_realtime(app):
 
 
 def _broadcast(obj: Dict[str, Any]):
-    """将对象广播给所有在线 ws 客户端（自动转 JSON）"""
+    """Broadcast object to all online ws clients (auto JSON)"""
     data = json.dumps(obj)
     with _clients_lock:
         dead = []
@@ -72,7 +72,7 @@ def _broadcast(obj: Dict[str, Any]):
                 pass
 
 
-# ---------------- 后台内置列车模拟（你之前就有的逻辑，这里保持；会定期发 train_tick） ----------------
+# ---------------- Built-in background train simulator (kept as-is; emits train_tick) ----------------
 class TrainThread(threading.Thread):
     def __init__(self, train_id: str, path_names: List[str], per_edge_seconds: List[float], loop=True, ping_interval=1.0):
         super().__init__(daemon=True)
@@ -85,7 +85,7 @@ class TrainThread(threading.Thread):
 
     def run(self):
         try:
-            # 通知启动
+            # Notify start
             _broadcast({"type": "train_status", "train_id": self.train_id, "status": "started"})
             while not self._stop.is_set():
                 for idx in range(len(self.path) - 1):
@@ -118,7 +118,7 @@ class TrainThread(threading.Thread):
 _trains: Dict[str, TrainThread] = {}
 
 def start_train(train_id: str, path_names: List[str], per_edge_seconds: List[float], loop=True, ping_interval=1.0):
-    # 停掉同名
+    # Stop same-named train
     if train_id in _trains:
         try:
             _trains[train_id].stop()

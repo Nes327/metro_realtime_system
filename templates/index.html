@@ -50,18 +50,18 @@
 <body>
   <div class="wrap">
     <h1>Metro Realtime — Route Planner</h1>
-    <p class="sub">选择起点与终点，规划路线并查看票价；地图高亮线路，小火车沿段移动（无坐标也能演示）。</p>
+    <p class="sub">Pick origin and destination, plan the route and fare; the map highlights the path and animates a train (works even without coords).</p>
 
     <div class="grid">
-      <!-- 左：规划 + 地图 -->
+      <!-- Left: planner + map -->
       <div class="card">
         <div class="grid">
           <div>
-            <label for="fromSel">From（起点）</label>
+            <label for="fromSel">From (origin)</label>
             <select id="fromSel"></select>
           </div>
           <div>
-            <label for="toSel">To（终点）</label>
+            <label for="toSel">To (destination)</label>
             <select id="toSel"></select>
           </div>
         </div>
@@ -69,31 +69,31 @@
         <div class="row" style="margin:12px 0 4px">
           <div class="radio">
             <input type="radio" name="mode" id="mStops" value="stops" checked />
-            <label for="mStops">最少站数 (stops)</label>
+            <label for="mStops">Fewest stops (stops)</label>
           </div>
           <div class="radio">
             <input type="radio" name="mode" id="mTime" value="time" />
-            <label for="mTime">最短时间 (time)</label>
+            <label for="mTime">Shortest time (time)</label>
           </div>
-          <button id="swapBtn" title="交换起终点">⇄ 交换</button>
-          <button id="planBtn">规划路线</button>
-          <button id="simBtn" style="background:#2563eb">开始模拟列车</button>
-          <button id="stopBtn" style="background:#9a3412">停止所有列车</button>
+          <button id="swapBtn" title="Swap origin & destination">⇄ Swap</button>
+          <button id="planBtn">Plan Route</button>
+          <button id="simBtn" style="background:#2563eb">Start Simulation</button>
+          <button id="stopBtn" style="background:#9a3412">Stop All Trains</button>
         </div>
 
-        <p class="muted">数据来自 <span class="mono">/stations</span>、<span class="mono">/route_by_name</span>、<span class="mono">/fare_by_name</span>；实时来自 <span class="mono">/ws</span>。</p>
+        <p class="muted">Data from <span class="mono">/stations</span>, <span class="mono">/route_by_name</span>, <span class="mono">/fare_by_name</span>; realtime via <span class="mono">/ws</span>.</p>
 
         <div id="result" style="margin-top:10px"></div>
 
         <div style="margin-top:10px">
           <div class="bar"><div id="totalBar" style="width:0%"></div></div>
-          <div class="muted">全程进度 <span id="totalPct">0%</span></div>
+          <div class="muted">Trip progress <span id="totalPct">0%</span></div>
         </div>
 
         <div id="map" style="margin-top:12px"></div>
       </div>
 
-      <!-- 右：WebSocket 日志 -->
+      <!-- Right: WebSocket log -->
       <div class="card">
         <div class="row" style="justify-content:space-between">
           <strong>Realtime (WebSocket)</strong>
@@ -104,13 +104,13 @@
           <input id="wsMsg" type="text" placeholder="type to echo…" />
           <button id="wsSend">Send</button>
         </div>
-        <p class="muted" style="margin-top:6px">此区域用于确认实时通道；地图和路线 chips 会同步高亮。</p>
+        <p class="muted" style="margin-top:6px">This area verifies the realtime channel; the map and chips highlight in sync.</p>
       </div>
     </div>
   </div>
 
   <script>
-    // ---------------- DOM refs ----------------
+    // DOM refs
     const $ = (sel)=>document.querySelector(sel);
     const fromSel = $('#fromSel');
     const toSel   = $('#toSel');
@@ -122,7 +122,7 @@
     const totalBar = $('#totalBar');
     const totalPct = $('#totalPct');
 
-    // ---------------- Leaflet ----------------
+    // Leaflet
     const map = L.map('map').setView([3.139, 101.6869], 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
       attribution:'&copy; OpenStreetMap contributors'
@@ -135,14 +135,14 @@
 
     const activeRoute = {
       pathNames: [],
-      geom: [],              // 当前路径的坐标序列（真坐标或临时轨道）
-      nameToLL: new Map(),   // name(lower) -> {lat,lng}（真坐标或临时）
+      geom: [],              // current path geometry
+      nameToLL: new Map(),   // name(lower) -> {lat,lng}
     };
 
     function showError(msg){ result.innerHTML = `<div class="error">${msg}</div>`; }
     function showOk(html){ result.innerHTML = `<div class="ok">${html}<div class="path" id="pathChips" style="margin-top:10px"></div></div>`; }
 
-    // ---------------- 1) 加载站点 ----------------
+    // 1) Load stations
     async function loadStations(){
       fromSel.innerHTML = '<option>Loading…</option>';
       toSel.innerHTML   = '<option>Loading…</option>';
@@ -150,8 +150,8 @@
       const js  = await res.json();
       const names = (js.data || []).map(s=>s.name);
       const opts = names.map(n=>`<option value="${n}">${n}</option>`).join('');
-      fromSel.innerHTML = `<option value="">选择起点</option>` + opts;
-      toSel.innerHTML   = `<option value="">选择终点</option>` + opts;
+      fromSel.innerHTML = `<option value="">Select origin</option>` + opts;
+      toSel.innerHTML   = `<option value="">Select destination</option>` + opts;
 
       const trySet = (sel, name)=>{
         const opt = Array.from(sel.options).find(o=>o.value.toLowerCase()===name.toLowerCase());
@@ -175,7 +175,7 @@
       }
     }
 
-    // ---------------- 2) UI ----------------
+    // 2) UI
     swapBtn.onclick = ()=>{
       const a = fromSel.value;
       fromSel.value = toSel.value;
@@ -183,13 +183,13 @@
     };
     const getMode = ()=>document.querySelector('input[name="mode"]:checked').value;
 
-    // ---------------- 3) 规划路线 ----------------
+    // 3) Plan route
     planBtn.onclick = async ()=>{
       const from = fromSel.value.trim();
       const to   = toSel.value.trim();
       const mode = getMode();
-      if(!from || !to){ showError('请选择起点与终点'); return; }
-      planBtn.disabled = true; planBtn.textContent = '规划中…';
+      if(!from || !to){ showError('Please choose origin and destination'); return; }
+      planBtn.disabled = true; planBtn.textContent = 'Planning…';
 
       try {
         const rUrl = `/route_by_name?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&mode=${encodeURIComponent(mode)}`;
@@ -197,7 +197,7 @@
         const [rRes, fRes] = await Promise.all([fetch(rUrl), fetch(fUrl)]);
         const rJs = await rRes.json();
         const fJs = await fRes.json();
-        if(!rRes.ok){ showError(`找不到路线（${from} → ${to}，mode=${mode}）`); return; }
+        if(!rRes.ok){ showError(`Route not found (${from} → ${to}, mode=${mode})`); return; }
 
         const path = rJs.path_names || [];
         activeRoute.pathNames = path;
@@ -205,39 +205,42 @@
         const chipsHtml = path.map((p,i)=> i===path.length-1
           ? `<span class="chip">${p}</span>`
           : `<span class="chip">${p}</span><span class="arrow">→</span>`).join(' ');
-        showOk(`从 <b>${from}</b> 到 <b>${to}</b>，模式 <code>${mode}</code>：<br>
-                途经 <b>${rJs.total_stops}</b> 站${(mode==='time'&&rJs.total_time!=null)?`，总时间 <b>${rJs.total_time}</b> 分钟`:''}
-                ${(fRes.ok&&fJs.price!=null)?`，票价 <b>RM ${Number(fJs.price).toFixed(2)}</b>`:'，票价暂无'}`);
-        $('#pathChips').innerHTML = chipsHtml;
+        const timePart = (mode==='time' && rJs.total_time!=null) ? `, total time <b>${rJs.total_time}</b> min` : '';
+        const farePart = (fRes.ok && fJs.price!=null) ? `, fare <b>RM ${Number(fJs.price).toFixed(2)}</b>` : ', fare unavailable';
+        showOk(
+          `From <b>${from}</b> to <b>${to}</b>, mode <code>${mode}</code>:<br>
+           via <b>${rJs.total_stops}</b> stops${timePart}${farePart}`
+        );
+        document.getElementById('pathChips').innerHTML = chipsHtml;
 
-        // 构建几何（优先真坐标；否则生成临时直线几何）
+        // Geometry (real coords preferred; otherwise synthetic line)
         buildRouteGeometry(path);
 
-        // 画 polyline
+        // Polyline
         if(routeLine){ map.removeLayer(routeLine); routeLine = null; }
         if(activeRoute.geom.length >= 2){
           routeLine = L.polyline(activeRoute.geom, {color:'#10b981', weight:5, opacity:.85}).addTo(map);
           map.fitBounds(routeLine.getBounds(), {padding:[30,30]});
         }
 
-        // 复位进度条
+        // Reset progress
         totalBar.style.width = '0%';
         totalPct.textContent = '0%';
 
       } catch (e){
         console.error(e);
-        showError('请求失败，请检查后端是否运行');
+        showError('Request failed. Is the backend running?');
       } finally {
-        planBtn.disabled = false; planBtn.textContent = '规划路线';
+        planBtn.disabled = false; planBtn.textContent = 'Plan Route';
       }
     };
 
-    // 构建当前路径的几何：有坐标→使用；否则→生成临时直线轨道
+    // Build geometry for current path
     function buildRouteGeometry(path){
       activeRoute.geom = [];
       activeRoute.nameToLL = new Map();
 
-      // 先看是否所有站都有真实坐标
+      // Use real coords if available
       const real = [];
       let allHave = true;
       for(const n of path){
@@ -251,8 +254,7 @@
         return;
       }
 
-      // 生成临时几何：按路径站数在线性插值一条线
-      // 选择两端锚点（可微调让线条更美观）
+      // Synthetic straight line
       const A = L.latLng(3.20, 101.64);
       const B = L.latLng(3.00, 101.76);
       const N = Math.max(2, path.length);
@@ -266,12 +268,12 @@
       }
     }
 
-    // ---------------- 4) 内置模拟（可选） ----------------
+    // 4) Built-in simulator
     simBtn.onclick = async ()=>{
       const from = fromSel.value.trim();
       const to   = toSel.value.trim();
-      if(!from || !to){ showError('请选择起点与终点'); return; }
-      simBtn.disabled = true; simBtn.textContent = '启动中…';
+      if(!from || !to){ showError('Please choose origin and destination'); return; }
+      simBtn.disabled = true; simBtn.textContent = 'Starting…';
       try{
         const resp = await fetch('/simulate_train', {
           method:'POST',
@@ -279,22 +281,23 @@
           body: JSON.stringify({ from, to, mode: 'time', speed: 6, loop: true, ping_interval: 1 })
         });
         const js = await resp.json();
-        if(!resp.ok){ showError('启动失败：' + (js.error || '')); }
+        if(!resp.ok){ showError('Start failed: ' + (js.error || '')); }
         else{ log(`[train] ${js.train_id} started (built-in)`); }
-      }catch(e){ showError('请求失败'); }
-      finally{ simBtn.disabled = false; simBtn.textContent = '开始模拟列车'; }
+      }catch(e){ showError('Request failed'); }
+      finally{ simBtn.disabled = false; simBtn.textContent = 'Start Simulation'; }
     };
 
+    // Stop all trains
     stopBtn.onclick = async ()=>{
       try{
         const list = await fetch('/trains').then(r=>r.json());
         const ids = list.trains || [];
         await Promise.all(ids.map(id=>fetch('/trains/'+encodeURIComponent(id), {method:'DELETE'})));
         log('stopped all built-in trains');
-      }catch(e){ showError('停止失败'); }
+      }catch(e){ showError('Stop failed'); }
     };
 
-    // ---------------- 5) WebSocket ----------------
+    // 5) WebSocket
     const ws = new WebSocket(`ws://${location.host}/ws`);
     const wsStatus = $('#wsStatus');
     const wsLog = $('#wsLog');
@@ -327,7 +330,7 @@
       }catch(e){ log('[ws] ' + ev.data); }
     });
 
-    // ---------------- 6) 高亮 chips + 总进度 ----------------
+    // 6) Highlight chips + total progress
     function updateChips(origin, dest){
       const pathBox = document.getElementById('pathChips');
       if(!pathBox) return;
@@ -355,16 +358,14 @@
       totalPct.textContent = pct.toFixed(1) + '%';
     }
 
-    // ---------------- 7) 小火车移动（支持真坐标或临时轨道） ----------------
+    // 7) Train marker movement
     function moveTrain(trainId, origin, dest, segProgress){
-      // 先从当前路径名->坐标表里取
       const a = activeRoute.nameToLL.get(String(origin).toLowerCase());
       const b = activeRoute.nameToLL.get(String(dest).toLowerCase());
       if(!a || !b){
-        // 如果还没规划路线，尝试用全局站点坐标（若有）
         const aa = stationCoords.get(String(origin).toLowerCase());
         const bb = stationCoords.get(String(dest).toLowerCase());
-        if(!aa || !bb) return; // 无坐标也无临时几何，直接返回（chips/进度仍会动）
+        if(!aa || !bb) return;
         const lat = aa.lat + (bb.lat-aa.lat) * Math.max(0,Math.min(1,segProgress));
         const lng = aa.lng + (bb.lng-aa.lng) * Math.max(0,Math.min(1,segProgress));
         placeTrain(trainId, lat, lng);
@@ -385,7 +386,7 @@
       }
     }
 
-    // 初始加载
+    // Init
     loadStations();
   </script>
 </body>

@@ -8,52 +8,77 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
-    :root { --bg:#0b0c0f; --card:#fff; --muted:#666; --accent:#10b981; }
-    html,body{margin:0;padding:0;background:#f7f7f8;color:#111;font-family:system-ui,Segoe UI,Roboto,Arial}
+    :root{
+      --bg:#f7f3e8;          /* beige */
+      --card:#ffffff;
+      --muted:#6b7280;
+      --text:#111827;
+      --primary:#2563eb;     /* buttons */
+      --route:#7c3aed;       /* polyline (purple) */
+      --train-built:#0ea5a4; /* teal (built-in) */
+      --train-gen:#ea580c;   /* orange (generator) */
+      --chip:#374151;        /* gray chips */
+      --chip-hi:#111827;     /* chip highlight */
+    }
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,Arial}
     .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
-    h1{font-weight:800;letter-spacing:.5px;margin:0 0 8px}
-    .sub{color:#555;margin:0 0 18px}
-    .grid{display:grid;grid-template-columns:1fr;gap:12px}
-    @media(min-width:980px){ .grid{grid-template-columns:1fr 1fr;gap:16px}}
+    h1{font-weight:800;letter-spacing:.4px;margin:0 0 4px}
+    .sub{color:var(--muted);margin:0 0 18px;font-size:14px}
+    .grid{display:grid;grid-template-columns:1fr;gap:16px}
+    @media(min-width:980px){ .grid{grid-template-columns:1fr 1fr;gap:18px} }
     .card{background:var(--card);border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.08);padding:16px}
-    label{display:block;font-size:14px;color:#444;margin:6px 0}
-    select, input[type="text"]{
-      width:100%;padding:10px 12px;border:1px solid #e3e3e7;border-radius:10px;
+
+    label{display:block;font-size:14px;color:#374151;margin:6px 0}
+    select{
+      width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;
       font-size:15px;background:#fff;outline:none;
     }
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .radio{display:flex;gap:10px;align-items:center}
     button{
-      padding:10px 14px;border-radius:12px;border:0;background:#111;color:#fff;
-      cursor:pointer;font-weight:600;letter-spacing:.3px
+      padding:10px 14px;border-radius:12px;border:0;background:var(--primary);color:#fff;
+      cursor:pointer;font-weight:600;letter-spacing:.2px
     }
-    button:disabled{opacity:.5;cursor:not-allowed}
-    .muted{color:var(--muted);font-size:14px}
-    .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#111;color:#fff;font-size:12px}
-    .path{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-    .chip{background:#111;color:#fff;border-radius:999px;padding:6px 10px;font-size:13px}
-    .arrow{opacity:.3}
-    .error{background:#ffe1e1;border:1px solid #ffc5c5;color:#8a1a1a;padding:10px;border-radius:10px}
-    .ok{background:#e9fff4;border:1px solid #b6f3d6;color:#0a6b49;padding:10px;border-radius:10px}
-    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
-    .wsbox{background:#0f1115;color:#8bf0c8;border-radius:12px;padding:10px;font-size:12px;min-height:100px;white-space:pre-wrap}
-    .bar{background:#e5e7eb;border-radius:8px;overflow:hidden;height:14px;margin-bottom:6px}
-    .bar > div{background:var(--accent);height:100%;width:0%}
-    #map{height:360px;border-radius:12px;border:1px solid #e5e7eb}
-    .train-icon{
-      background:#111;color:#fff;border-radius:999px;padding:4px 8px;font-size:12px;
-      border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.2)
+    button.secondary{background:#111;}
+    button.warn{background:#9a3412;}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .muted{color:var(--muted);font-size:13px}
+    .mono{font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .path{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .chip{background:var(--chip);color:#fff;border-radius:999px;padding:6px 10px;font-size:13px;transition:.15s}
+    .chip.active{background:var(--chip-hi)}
+    .arrow{opacity:.35}
+    .error{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;padding:10px;border-radius:10px}
+    .ok{background:#f1f5f9;border:1px solid #e2e8f0;color:#0f172a;padding:10px;border-radius:10px}
+    .bar{background:#e5e7eb;border-radius:8px;overflow:hidden;height:14px;margin:10px 0 6px}
+    .bar > div{background:var(--primary);height:100%;width:0%}
+    #map{height:420px;border-radius:12px;border:1px solid #e5e7eb}
+
+    /* train icons: colored dots without text */
+    .train-dot{
+      width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.2)
     }
-    .chip.active{background:#047857!important}
+    .train-built{background:var(--train-built)}
+    .train-gen{background:var(--train-gen)}
+
+    /* collapsible ws panel */
+    details.ws {margin-top:16px}
+    details.ws > summary{
+      list-style:none;background:#111;color:#fff;padding:10px 12px;border-radius:12px;cursor:pointer;
+      font-weight:600;display:flex;align-items:center;justify-content:space-between;
+    }
+    details.ws[open] > summary{border-bottom-left-radius:0;border-bottom-right-radius:0}
+    .wsbox{background:#0f1115;color:#8bf0c8;border-bottom-left-radius:12px;border-bottom-right-radius:12px;
+      padding:10px;font-size:12px;min-height:100px;white-space:pre-wrap}
+    .legend{display:flex;gap:14px;align-items:center;margin:8px 0 0;font-size:13px;color:#374151;flex-wrap:wrap}
+    .dot{display:inline-block;width:12px;height:12px;border-radius:50%}
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Metro Realtime — Route Planner</h1>
-    <p class="sub">Pick origin and destination, plan the route and fare; the map highlights the path and animates a train (works even without coords).</p>
+    <p class="sub">Pick origin and destination, plan the route and fare; the map highlights the path and animates a train.</p>
 
     <div class="grid">
-      <!-- Left: planner + map -->
       <div class="card">
         <div class="grid">
           <div>
@@ -66,51 +91,48 @@
           </div>
         </div>
 
-        <div class="row" style="margin:12px 0 4px">
-          <div class="radio">
-            <input type="radio" name="mode" id="mStops" value="stops" checked />
-            <label for="mStops">Fewest stops (stops)</label>
-          </div>
-          <div class="radio">
-            <input type="radio" name="mode" id="mTime" value="time" />
-            <label for="mTime">Shortest time (time)</label>
-          </div>
-          <button id="swapBtn" title="Swap origin & destination">⇄ Swap</button>
+        <div class="row" style="margin:12px 0 6px">
           <button id="planBtn">Plan Route</button>
-          <button id="simBtn" style="background:#2563eb">Start Simulation</button>
-          <button id="stopBtn" style="background:#9a3412">Stop All Trains</button>
+          <button id="swapBtn" class="secondary" title="Swap">↔ Swap</button>
+          <button id="simBtn" style="background:var(--train-built)">Start Simulation</button>
+          <button id="stopBtn" class="warn">Stop All Trains</button>
         </div>
 
         <p class="muted">Data from <span class="mono">/stations</span>, <span class="mono">/route_by_name</span>, <span class="mono">/fare_by_name</span>; realtime via <span class="mono">/ws</span>.</p>
 
-        <div id="result" style="margin-top:10px"></div>
+        <div id="result" style="margin-top:8px"></div>
 
         <div style="margin-top:10px">
           <div class="bar"><div id="totalBar" style="width:0%"></div></div>
           <div class="muted">Trip progress <span id="totalPct">0%</span></div>
         </div>
 
-        <div id="map" style="margin-top:12px"></div>
+        <div class="legend">
+          <span class="dot" style="background:var(--route)"></span> Route
+          <span class="dot" style="background:#6b7280"></span> Station
+          <span class="dot" style="background:var(--train-built)"></span> Built-in train
+          <span class="dot" style="background:var(--train-gen)"></span> Generator train
+        </div>
+
+        <div id="map" style="margin-top:10px"></div>
+
+        <!-- Collapsible realtime panel, default closed -->
+        <details class="ws">
+          <summary>Realtime (WebSocket) <span id="wsStatus" style="font-weight:400;opacity:.8">— collapsed</span></summary>
+          <div class="wsbox" id="wsLog"></div>
+        </details>
       </div>
 
-      <!-- Right: WebSocket log -->
       <div class="card">
-        <div class="row" style="justify-content:space-between">
-          <strong>Realtime (WebSocket)</strong>
-          <span id="wsStatus" class="pill">connecting…</span>
+        <div id="routePanel">
+          <p class="muted">Route details appear on the left after planning. This column is kept minimal for a tidy layout.</p>
         </div>
-        <div class="wsbox" id="wsLog"></div>
-        <div class="row" style="margin-top:8px">
-          <input id="wsMsg" type="text" placeholder="type to echo…" />
-          <button id="wsSend">Send</button>
-        </div>
-        <p class="muted" style="margin-top:6px">This area verifies the realtime channel; the map and chips highlight in sync.</p>
       </div>
     </div>
   </div>
 
   <script>
-    // DOM refs
+    /* refs */
     const $ = (sel)=>document.querySelector(sel);
     const fromSel = $('#fromSel');
     const toSel   = $('#toSel');
@@ -122,27 +144,28 @@
     const totalBar = $('#totalBar');
     const totalPct = $('#totalPct');
 
-    // Leaflet
+    /* map */
     const map = L.map('map').setView([3.139, 101.6869], 12);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-      attribution:'&copy; OpenStreetMap contributors'
-    }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
 
-    const stationCoords = new Map(); // name(lower) -> {lat,lng}
+    /* stations */
+    const stationCoords = new Map();   // name(lower) -> {lat,lng}
+    const stationMarkers = new Map();  // name(lower) -> marker
+
+    /* route & trains */
     let routeLine = null;
-    const trains = new Map(); // id -> {marker}
-    const trainIcon = (id)=> L.divIcon({ className:'train-icon', html:`🚆 ${id}`, iconSize:[40,20], iconAnchor:[20,10] });
+    const trains = new Map(); // id -> {marker, source}
+    const iconTrain = (source)=> L.divIcon({
+      className:'', html:`<div class="train-dot ${source==='gen'?'train-gen':'train-built'}"></div>`,
+      iconSize:[18,18], iconAnchor:[9,9]
+    });
 
-    const activeRoute = {
-      pathNames: [],
-      geom: [],              // current path geometry
-      nameToLL: new Map(),   // name(lower) -> {lat,lng}
-    };
+    const activeRoute = { pathNames: [], geom: [], nameToLL: new Map() };
 
     function showError(msg){ result.innerHTML = `<div class="error">${msg}</div>`; }
     function showOk(html){ result.innerHTML = `<div class="ok">${html}<div class="path" id="pathChips" style="margin-top:10px"></div></div>`; }
 
-    // 1) Load stations
+    /* load stations (gray markers) */
     async function loadStations(){
       fromSel.innerHTML = '<option>Loading…</option>';
       toSel.innerHTML   = '<option>Loading…</option>';
@@ -153,77 +176,65 @@
       fromSel.innerHTML = `<option value="">Select origin</option>` + opts;
       toSel.innerHTML   = `<option value="">Select destination</option>` + opts;
 
-      const trySet = (sel, name)=>{
-        const opt = Array.from(sel.options).find(o=>o.value.toLowerCase()===name.toLowerCase());
-        if(opt) sel.value = opt.value;
-      };
-      trySet(fromSel, 'KLCC');
-      trySet(toSel, 'Kajang');
+      const trySet = (sel, name)=>{ const opt = Array.from(sel.options).find(o=>o.value.toLowerCase()===name.toLowerCase()); if(opt) sel.value = opt.value; };
+      trySet(fromSel, 'KLCC'); trySet(toSel, 'Kajang');
 
-      let anyCoords = false;
       (js.data || []).forEach(s=>{
+        const key = String(s.name).toLowerCase();
         if(s.latitude!=null && s.longitude!=null){
-          anyCoords = true;
-          stationCoords.set(s.name.toLowerCase(), {lat: s.latitude, lng: s.longitude});
-          L.circleMarker([s.latitude, s.longitude], {
-            radius:4, weight:1, color:'#111', fillColor:'#111', fillOpacity:.9
-          }).bindTooltip(s.name).addTo(map);
+          stationCoords.set(key, {lat:s.latitude, lng:s.longitude});
+          const color = '#6b7280'; // gray
+          const m = L.circleMarker([s.latitude, s.longitude], {radius:4, weight:1, color:color, fillColor:color, fillOpacity:.95})
+            .bindTooltip(s.name).addTo(map);
+          stationMarkers.set(key, m);
         }
       });
-      if(!anyCoords){
-        console.log('[map] no station coordinates in DB; will use synthetic geometry per route.');
-      }
     }
 
-    // 2) UI
-    swapBtn.onclick = ()=>{
-      const a = fromSel.value;
-      fromSel.value = toSel.value;
-      toSel.value = a;
-    };
-    const getMode = ()=>document.querySelector('input[name="mode"]:checked').value;
+    /* swap */
+    swapBtn.onclick = ()=>{ const a = fromSel.value; fromSel.value = toSel.value; toSel.value = a; };
 
-    // 3) Plan route
+    /* plan route: always mode=time */
     planBtn.onclick = async ()=>{
       const from = fromSel.value.trim();
       const to   = toSel.value.trim();
-      const mode = getMode();
-      if(!from || !to){ showError('Please choose origin and destination'); return; }
+      if(!from || !to){ showError('Please select origin and destination'); return; }
       planBtn.disabled = true; planBtn.textContent = 'Planning…';
 
       try {
-        const rUrl = `/route_by_name?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&mode=${encodeURIComponent(mode)}`;
+        const rUrl = `/route_by_name?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&mode=time`;
         const fUrl = `/fare_by_name?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
         const [rRes, fRes] = await Promise.all([fetch(rUrl), fetch(fUrl)]);
         const rJs = await rRes.json();
         const fJs = await fRes.json();
-        if(!rRes.ok){ showError(`Route not found (${from} → ${to}, mode=${mode})`); return; }
+        if(!rRes.ok){ showError(`Route not found (${from} → ${to})`); return; }
 
         const path = rJs.path_names || [];
         activeRoute.pathNames = path;
 
-        const chipsHtml = path.map((p,i)=> i===path.length-1
-          ? `<span class="chip">${p}</span>`
-          : `<span class="chip">${p}</span><span class="arrow">→</span>`).join(' ');
-        const timePart = (mode==='time' && rJs.total_time!=null) ? `, total time <b>${rJs.total_time}</b> min` : '';
-        const farePart = (fRes.ok && fJs.price!=null) ? `, fare <b>RM ${Number(fJs.price).toFixed(2)}</b>` : ', fare unavailable';
-        showOk(
-          `From <b>${from}</b> to <b>${to}</b>, mode <code>${mode}</code>:<br>
-           via <b>${rJs.total_stops}</b> stops${timePart}${farePart}`
-        );
-        document.getElementById('pathChips').innerHTML = chipsHtml;
+        const farePart = (fRes.ok && fJs.price!=null) ? `, fare <b>RM ${Number(fJs.price).toFixed(2)}</b>` : '';
+        const timePart = (rJs.total_time!=null) ? `, time <b>${rJs.total_time}</b> min` : '';
+        showOk(`From <b>${from}</b> to <b>${to}</b>, via <b>${rJs.total_stops}</b> stops${timePart}${farePart}`);
 
-        // Geometry (real coords preferred; otherwise synthetic line)
+        /* chips (all gray) */
+        const chips = [];
+        for(let i=0;i<path.length;i++){
+          const node = `<span class="chip">${path[i]}</span>`;
+          chips.push(node);
+          if(i<path.length-1) chips.push(`<span class="arrow">→</span>`);
+        }
+        $('#pathChips').innerHTML = chips.join(' ');
+
+        /* geometry */
         buildRouteGeometry(path);
 
-        // Polyline
+        /* polyline (purple) */
         if(routeLine){ map.removeLayer(routeLine); routeLine = null; }
         if(activeRoute.geom.length >= 2){
-          routeLine = L.polyline(activeRoute.geom, {color:'#10b981', weight:5, opacity:.85}).addTo(map);
+          routeLine = L.polyline(activeRoute.geom, {color:'var(--route)', weight:5, opacity:.95}).addTo(map);
           map.fitBounds(routeLine.getBounds(), {padding:[30,30]});
         }
 
-        // Reset progress
         totalBar.style.width = '0%';
         totalPct.textContent = '0%';
 
@@ -235,12 +246,11 @@
       }
     };
 
-    // Build geometry for current path
+    /* build geometry (real coords if available, else synthetic) */
     function buildRouteGeometry(path){
       activeRoute.geom = [];
       activeRoute.nameToLL = new Map();
 
-      // Use real coords if available
       const real = [];
       let allHave = true;
       for(const n of path){
@@ -249,12 +259,8 @@
         real.push([c.lat, c.lng]);
         activeRoute.nameToLL.set(n.toLowerCase(), {lat:c.lat,lng:c.lng});
       }
-      if(allHave && real.length>=2){
-        activeRoute.geom = real;
-        return;
-      }
+      if(allHave && real.length>=2){ activeRoute.geom = real; return; }
 
-      // Synthetic straight line
       const A = L.latLng(3.20, 101.64);
       const B = L.latLng(3.00, 101.76);
       const N = Math.max(2, path.length);
@@ -268,11 +274,11 @@
       }
     }
 
-    // 4) Built-in simulator
+    /* simulator */
     simBtn.onclick = async ()=>{
       const from = fromSel.value.trim();
       const to   = toSel.value.trim();
-      if(!from || !to){ showError('Please choose origin and destination'); return; }
+      if(!from || !to){ showError('Please select origin and destination'); return; }
       simBtn.disabled = true; simBtn.textContent = 'Starting…';
       try{
         const resp = await fetch('/simulate_train', {
@@ -287,7 +293,6 @@
       finally{ simBtn.disabled = false; simBtn.textContent = 'Start Simulation'; }
     };
 
-    // Stop all trains
     stopBtn.onclick = async ()=>{
       try{
         const list = await fetch('/trains').then(r=>r.json());
@@ -297,15 +302,14 @@
       }catch(e){ showError('Stop failed'); }
     };
 
-    // 5) WebSocket
+    /* WebSocket (collapsed panel at bottom) */
     const ws = new WebSocket(`ws://${location.host}/ws`);
     const wsStatus = $('#wsStatus');
     const wsLog = $('#wsLog');
-    const log = (t)=>{ wsLog.textContent += t + "\n"; wsLog.scrollTop = wsLog.scrollHeight; };
-    $('#wsSend').onclick = ()=>{ if(ws.readyState===1){ ws.send($('#wsMsg').value||''); } };
-    ws.addEventListener('open', ()=>{ wsStatus.textContent='connected'; wsStatus.style.background='#0a6b49'; log('[ws] open'); });
-    ws.addEventListener('close', ()=>{ wsStatus.textContent='closed'; wsStatus.style.background='#999'; log('[ws] close'); });
-    ws.addEventListener('error', ()=>{ wsStatus.textContent='error'; wsStatus.style.background='#b33'; log('[ws] error'); });
+    const log = (t)=>{ if(wsLog){ wsLog.textContent += t + "\n"; wsLog.scrollTop = wsLog.scrollHeight; } };
+    ws.addEventListener('open', ()=>{ wsStatus.textContent='connected'; log('[ws] open'); });
+    ws.addEventListener('close', ()=>{ wsStatus.textContent='closed'; log('[ws] close'); });
+    ws.addEventListener('error', ()=>{ wsStatus.textContent='error'; log('[ws] error'); });
 
     ws.addEventListener('message', (ev)=>{
       try{
@@ -313,35 +317,44 @@
         if(js.type === 'hello'){ log('[ws] ' + js.msg); return; }
 
         if(js.type === 'train_tick'){
-          log(`[train] ${js.train_id}: ${js.origin} → ${js.dest} ${(js.progress*100).toFixed(0)}%`);
-          updateChips(js.origin, js.dest);
+          // Built-in train: teal
+          updateChipsOnProgress(js.origin, js.dest, js.progress);
           updateTotalProgress(js.origin, js.dest, js.progress);
-          moveTrain(js.train_id, js.origin, js.dest, js.progress);
+          moveTrain(js.train_id, js.origin, js.dest, js.progress, 'built');
           return;
         }
         if(js.type === 'train_update'){
-          log(`[update] ${js.train_id}: ${js.from} → ${js.to} ${(js.progress*100).toFixed(0)}%`);
-          updateChips(js.from, js.to);
+          // Generator: orange
+          updateChipsOnProgress(js.from, js.to, js.progress);
           updateTotalProgress(js.from, js.to, js.progress);
-          moveTrain(js.train_id, js.from, js.to, js.progress);
+          moveTrain(js.train_id, js.from, js.to, js.progress, 'gen');
           return;
         }
         log('[ws] ' + ev.data);
       }catch(e){ log('[ws] ' + ev.data); }
     });
 
-    // 6) Highlight chips + total progress
-    function updateChips(origin, dest){
+    /* chips & progress (highlight current station only) */
+    function updateChipsOnProgress(origin, dest, segProgress){
       const pathBox = document.getElementById('pathChips');
       if(!pathBox) return;
       const chips = [...pathBox.querySelectorAll('.chip')];
       chips.forEach(ch=>ch.classList.remove('active'));
-      chips.forEach((ch,i)=>{
-        const name = ch.textContent.trim().toLowerCase();
-        if(name===String(origin).toLowerCase() || name===String(dest).toLowerCase()){
-          ch.classList.add('active');
-        }
-      });
+
+      const o = String(origin).toLowerCase();
+      const d = String(dest).toLowerCase();
+
+      if(segProgress <= 0.05){
+        const ch = chips.find(el=>el.textContent.trim().toLowerCase()===o);
+        if(ch) ch.classList.add('active');
+        return;
+      }
+      if(segProgress >= 0.95){
+        const ch = chips.find(el=>el.textContent.trim().toLowerCase()===d);
+        if(ch) ch.classList.add('active');
+        return;
+      }
+      // mid-segment: no special chip highlight
     }
 
     function updateTotalProgress(origin, dest, segProgress){
@@ -358,35 +371,38 @@
       totalPct.textContent = pct.toFixed(1) + '%';
     }
 
-    // 7) Train marker movement
-    function moveTrain(trainId, origin, dest, segProgress){
+    /* train movement (no text on icon) */
+    function moveTrain(trainId, origin, dest, segProgress, source){
       const a = activeRoute.nameToLL.get(String(origin).toLowerCase());
       const b = activeRoute.nameToLL.get(String(dest).toLowerCase());
-      if(!a || !b){
+      let lat,lng;
+      if(a && b){
+        lat = a.lat + (b.lat-a.lat) * Math.max(0,Math.min(1,segProgress));
+        lng = a.lng + (b.lng-a.lng) * Math.max(0,Math.min(1,segProgress));
+      }else{
         const aa = stationCoords.get(String(origin).toLowerCase());
         const bb = stationCoords.get(String(dest).toLowerCase());
         if(!aa || !bb) return;
-        const lat = aa.lat + (bb.lat-aa.lat) * Math.max(0,Math.min(1,segProgress));
-        const lng = aa.lng + (bb.lng-aa.lng) * Math.max(0,Math.min(1,segProgress));
-        placeTrain(trainId, lat, lng);
-        return;
+        lat = aa.lat + (bb.lat-aa.lat) * Math.max(0,Math.min(1,segProgress));
+        lng = aa.lng + (bb.lng-aa.lng) * Math.max(0,Math.min(1,segProgress));
       }
-      const lat = a.lat + (b.lat-a.lat) * Math.max(0,Math.min(1,segProgress));
-      const lng = a.lng + (b.lng-a.lng) * Math.max(0,Math.min(1,segProgress));
-      placeTrain(trainId, lat, lng);
+      placeTrain(trainId, lat, lng, source);
     }
 
-    function placeTrain(id, lat, lng){
+    function placeTrain(id, lat, lng, source){
       let t = trains.get(id);
+      const ic = iconTrain(source);
       if(!t){
-        t = {marker: L.marker([lat,lng], {icon: trainIcon(id)}).addTo(map)};
+        t = {marker: L.marker([lat,lng], {icon: ic}).addTo(map), source};
         trains.set(id, t);
       }else{
+        t.source = source;
+        t.marker.setIcon(ic);
         t.marker.setLatLng([lat,lng]);
       }
     }
 
-    // Init
+    /* init */
     loadStations();
   </script>
 </body>

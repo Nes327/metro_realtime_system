@@ -10,19 +10,25 @@ def _name_to_id_map(conn):
 
 api_bp = Blueprint("api", __name__)
 
+# Health check
 @api_bp.get("/health")
 def health():
+    """Simple endpoint to verify API is alive."""
     return jsonify(status="ok")
 
+# Stations
 @api_bp.get("/stations")
 def stations():
+    """Return full station list with metadata."""
     db_path = current_app.config["DB_PATH"]
     with get_conn(db_path) as conn:
         data = get_all_stations(conn)
     return jsonify(count=len(data), data=data)
 
+# Fare endpoints
 @api_bp.get("/fare")
 def fare():
+    """Query fare by numeric station IDs."""
     from_id = request.args.get("from", type=int)
     to_id = request.args.get("to", type=int)
     if from_id is None or to_id is None:
@@ -34,20 +40,9 @@ def fare():
         return jsonify({"from_id": from_id, "to_id": to_id, "price": None, "message": "fare not found"}), 404
     return jsonify({"from_id": from_id, "to_id": to_id, "price": price})
 
-@api_bp.get("/search_station")
-def search_station():
-    q = (request.args.get("q") or "").strip().lower()
-    if not q:
-        return jsonify(error="missing q"), 400
-    db_path = current_app.config["DB_PATH"]
-    with get_conn(db_path) as conn:
-        rows = conn.execute(
-            "SELECT station_id, name FROM stations WHERE lower(name) LIKE ?", (f"%{q}%",)
-        ).fetchall()
-    return jsonify(results=[dict(r) for r in rows])
-
 @api_bp.get("/fare_by_name")
 def fare_by_name():
+    """Query fare by station names (case-insensitive)."""
     from_name = (request.args.get("from") or "").strip().lower()
     to_name   = (request.args.get("to") or "").strip().lower()
     if not from_name or not to_name:
@@ -64,8 +59,24 @@ def fare_by_name():
         return jsonify({"from": from_name, "to": to_name, "price": None, "message": "fare not found"}), 404
     return jsonify({"from": from_name, "to": to_name, "price": price, "from_id": from_id, "to_id": to_id})
 
+# Station search
+@api_bp.get("/search_station")
+def search_station():
+    """Search stations by substring in name."""
+    q = (request.args.get("q") or "").strip().lower()
+    if not q:
+        return jsonify(error="missing q"), 400
+    db_path = current_app.config["DB_PATH"]
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT station_id, name FROM stations WHERE lower(name) LIKE ?", (f"%{q}%",)
+        ).fetchall()
+    return jsonify(results=[dict(r) for r in rows])
+
+# Route endpoints
 @api_bp.get("/route")
 def route_by_id():
+    """Compute route using station IDs (supports 'stops' or 'time' mode)."""
     from_id = request.args.get("from", type=int)
     to_id   = request.args.get("to", type=int)
     mode    = (request.args.get("mode") or "stops").strip().lower()
@@ -86,6 +97,7 @@ def route_by_id():
 
 @api_bp.get("/route_by_name")
 def route_by_name():
+    """Compute route using station names (supports 'stops' or 'time' mode)."""
     from_name = (request.args.get("from") or "").strip().lower()
     to_name   = (request.args.get("to") or "").strip().lower()
     mode      = (request.args.get("mode") or "stops").strip().lower()
@@ -109,21 +121,12 @@ def route_by_name():
         "total_stops": res["total_stops"], "total_time": res["total_time"]
     })
 
-# ======= Train Simulation REST =======
+# Train simulation endpoints
 @api_bp.post("/simulate_train")
 def simulate_train():
     """
-    Simulate train movement based on Time.csv (routes.travel_time_min).
-    Body(JSON):
-      {
-        "train_id": "Train-1",   // optional
-        "from": "KLCC",
-        "to": "Kajang",
-        "mode": "time",
-        "speed": 1.0,
-        "loop": true,
-        "ping_interval": 1.0
-      }
+    Start a simulated train journey.
+    Reads travel_time_min per edge from DB and emits progress via WebSocket.
     """
     data = request.get_json(silent=True) or {}
     from_name = (data.get("from") or "").strip().lower()
@@ -144,18 +147,21 @@ def simulate_train():
     db_path = current_app.config["DB_PATH"]
 
     with get_conn(db_path) as conn:
+        # Convert names to IDs
         n2i = _name_to_id_map(conn)
         from_id = n2i.get(from_name)
         to_id   = n2i.get(to_name)
         if from_id is None or to_id is None:
             return jsonify(error="station name not found"), 404
 
+        # Compute route
         res = get_route_shortest(conn, from_id, to_id, mode=mode)
         if not res:
             return jsonify(error="route not found"), 404
         path_names = res["path_names"]
         path_ids   = res["path_ids"]
 
+        # Calculate travel seconds
         per_edge_seconds = []
         DEFAULT_EDGE_SEC = 8.0
         for i in range(len(path_ids) - 1):
@@ -179,6 +185,7 @@ def simulate_train():
 
             per_edge_seconds.append(sec)
 
+    # Start background thread to simulate train
     start_train(
         train_id,
         path_names,
@@ -191,18 +198,21 @@ def simulate_train():
 
 @api_bp.get("/trains")
 def trains_list():
+    """Return IDs of active simulated trains."""
     return jsonify(trains=list_trains())
 
 @api_bp.delete("/trains/<train_id>")
 def trains_stop(train_id):
+    """Stop a simulated train by ID."""
     ok = stop_train(train_id)
     return jsonify(ok=ok, train_id=train_id)
 
+# Debug utilities
 @api_bp.get("/edge_times_by_name")
 def edge_times_by_name():
     """
-    Show per-segment travel_time_min (minutes) for a route by station names.
-    Example: /edge_times_by_name?from=KLCC&to=Kajang&mode=time
+    Debug endpoint: return per-segment travel_time_min along a route.
+    Useful for verifying Time.csv import.
     """
     from_name = (request.args.get("from") or "").strip().lower()
     to_name   = (request.args.get("to") or "").strip().lower()
@@ -250,6 +260,7 @@ def edge_times_by_name():
 
 @api_bp.get("/debug/neighbors")
 def debug_neighbors():
+    """Debug endpoint: list neighbor stations and travel times for a given station."""
     name = (request.args.get("name") or "").strip()
     if not name:
         return jsonify(error="missing name"), 400

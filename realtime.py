@@ -8,22 +8,25 @@ from flask_sock import Sock
 
 sock = Sock()
 
+# Active WebSocket clients
 _clients_lock = threading.Lock()
 _clients: List[Any] = []
 
 def init_realtime(app):
     """
-    Initialize WebSocket route /ws
-    - Frontend or data_generator.py connects to this endpoint
-    - Server broadcasts train updates from the built-in simulator or external scripts
+    Set up the /ws WebSocket endpoint.
+    - Frontend and data_generator.py connect here.
+    - Any "train_update" messages received are broadcast to all clients.
     """
     sock.init_app(app)
 
     @sock.route('/ws')
     def ws_handler(ws):
+        # Register the new client
         with _clients_lock:
             _clients.append(ws)
         try:
+            # Send initial message
             ws.send(json.dumps({"type": "hello", "msg": "hello from server (train realtime ready)"}))
             while True:
                 msg = ws.receive()
@@ -31,11 +34,12 @@ def init_realtime(app):
                     break
                 try:
                     js = json.loads(msg)
+                    # Only broadcast train updates
                     if isinstance(js, dict) and js.get("type") == "train_update":
-                        _broadcast(js)  
+                        _broadcast(js)
                         ws.send(msg)
                 except Exception:
-                    ws.send(msg)
+                    ws.send(msg) 
         finally:
             with _clients_lock:
                 if ws in _clients:
@@ -45,7 +49,7 @@ def init_realtime(app):
 
 
 def _broadcast(obj: Dict[str, Any]):
-    """Broadcast object to all online ws clients (auto JSON)"""
+    """Send object (JSON) to all connected WebSocket clients."""
     data = json.dumps(obj)
     with _clients_lock:
         dead = []
@@ -61,8 +65,12 @@ def _broadcast(obj: Dict[str, Any]):
                 pass
 
 
-#Train simulator
+# Train Simulator
 class TrainThread(threading.Thread):
+    """
+    Background thread that simulates a train moving along a route.
+    Sends 'train_tick' messages periodically until stopped.
+    """
     def __init__(self, train_id: str, path_names: List[str], per_edge_seconds: List[float], loop=True, ping_interval=1.0):
         super().__init__(daemon=True)
         self.train_id = train_id
@@ -97,15 +105,19 @@ class TrainThread(threading.Thread):
                 if not self.loop:
                     break
         finally:
+            # Announce stop
             _broadcast({"type": "train_status", "train_id": self.train_id, "status": "stopped"})
 
     def stop(self):
+        """Signal the train thread to stop."""
         self._stop.set()
 
 
+# Active train simulations
 _trains: Dict[str, TrainThread] = {}
 
 def start_train(train_id: str, path_names: List[str], per_edge_seconds: List[float], loop=True, ping_interval=1.0):
+    """Start a new simulated train (or restart if already exists)."""
     if train_id in _trains:
         try:
             _trains[train_id].stop()
@@ -116,6 +128,7 @@ def start_train(train_id: str, path_names: List[str], per_edge_seconds: List[flo
     t.start()
 
 def stop_train(train_id: str) -> bool:
+    """Stop a running simulated train."""
     if train_id in _trains:
         try:
             _trains[train_id].stop()
@@ -125,4 +138,5 @@ def stop_train(train_id: str) -> bool:
     return False
 
 def list_trains():
+    """Return a list of active train IDs."""
     return list(_trains.keys())

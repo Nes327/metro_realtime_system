@@ -4,28 +4,33 @@
   <meta charset="utf-8" />
   <title>Metro Realtime — Route & Fare</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Leaflet core CSS/JS for map rendering -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
   <style>
+    /*Design tokens*/
     :root{
-      --bg:#f7f3e8;     
-      --card:#ffffff;
-      --muted:#6b7280;
-      --text:#111827;
-      --primary:#2563eb;    
-      --route:#7c3aed;   
-      --train-built:#0ea5a4; 
-      --train-gen:#ea580c;   
-      --chip:#6b7280;        
-      --chip-hi:#111827;     
+      --bg:#f7f3e8;             /* app background*/
+      --card:#ffffff;           /* card background*/
+      --muted:#6b7280;          /* secondary text */
+      --text:#111827;           /* primary text */
+      --primary:#2563eb;        /* buttons / progress bar */
+      --route:#7c3aed;          /* polyline color */
+      --train-built:#0ea5a4;    /* built-in simulator train*/
+      --train-gen:#ea580c;      /* generator train*/
+      --chip:#6b7280;           /* station chip*/
+      --chip-hi:#111827;        /* station chip highlight */
     }
+
+    /* Basic layout*/
     html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,Arial}
     .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
     h1{font-weight:800;letter-spacing:.4px;margin:0 0 6px}
     .sub{color:var(--muted);margin:0 0 16px;font-size:14px}
-
     .card{background:var(--card);border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.08);padding:16px}
 
+    /* Form controls */
     label{display:block;font-size:14px;color:#374151;margin:6px 0}
     select{
       width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;
@@ -34,6 +39,7 @@
     .grid2{display:grid;grid-template-columns:1fr;gap:12px}
     @media(min-width:720px){ .grid2{grid-template-columns:1fr 1fr;gap:16px} }
 
+    /* Buttons row */
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     button{
       padding:10px 14px;border-radius:12px;border:0;background:var(--primary);color:#fff;
@@ -43,6 +49,7 @@
     button.warn{background:#9a3412;}
     button:disabled{opacity:.6;cursor:not-allowed}
 
+    /* chips */
     .muted{color:var(--muted);font-size:13px}
     .ok{background:#f1f5f9;border:1px solid #e2e8f0;color:#0f172a;padding:10px;border-radius:10px}
     .error{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;padding:10px;border-radius:10px}
@@ -52,13 +59,17 @@
     .chip.active{background:var(--chip-hi)}
     .arrow{opacity:.35}
 
+    /* Progress bar for overall trip progress */
     .bar{background:#e5e7eb;border-radius:8px;overflow:hidden;height:14px;margin:10px 0 6px}
     .bar > div{background:var(--primary);height:100%;width:0%}
 
+    /* Map viewport */
     #map{height:420px;border-radius:12px;border:1px solid #e5e7eb}
 
+    /* Station markers (Leaflet circleMarker) */
     .leaflet-interactive.station { stroke:#6b7280; fill:#6b7280; }
 
+    /* Train marker as a small rounded badge with emoji (no text label) */
     .train-badge{
       display:inline-flex;align-items:center;justify-content:center;
       width:26px;height:20px;border-radius:999px;
@@ -66,6 +77,7 @@
       font-size:14px;line-height:1;
     }
 
+    /* Legend */
     .legend{display:flex;gap:14px;align-items:center;margin:8px 0 0;font-size:13px;color:#374151;flex-wrap:wrap}
     .dot{display:inline-block;width:12px;height:12px;border-radius:50%}
   </style>
@@ -73,9 +85,10 @@
 <body>
   <div class="wrap">
     <h1>Metro Realtime — Route Planner</h1>
-    <p class="sub">Pick origin and destination, plan the route and fare; the map highlights the path and animates a train.</p>
+    <p class="sub">Pick origin and destination, plan the route and fare.</p>
 
     <div class="card">
+      <!-- Station pickers -->
       <div class="grid2">
         <div>
           <label for="fromSel">From (origin)</label>
@@ -87,6 +100,7 @@
         </div>
       </div>
 
+      <!-- Actions: plan, swap, start, stop sim -->
       <div class="row" style="margin:12px 0 6px">
         <button id="planBtn">Plan Route</button>
         <button id="swapBtn" class="secondary" title="Swap">↔ Swap</button>
@@ -94,8 +108,10 @@
         <button id="stopBtn" class="warn">Stop All Trains</button>
       </div>
 
+      <!-- Result panel (route meta + chips) -->
       <div id="result" style="margin-top:8px"></div>
 
+      <!-- Overall trip progress bar -->
       <div style="margin-top:10px">
         <div class="bar"><div id="totalBar" style="width:0%"></div></div>
         <div class="muted">Trip progress <span id="totalPct">0%</span></div>
@@ -108,11 +124,13 @@
         <span class="dot" style="background:var(--train-gen)"></span> Generator train
       </div>
 
+      <!-- Leaflet map container -->
       <div id="map" style="margin-top:10px"></div>
     </div>
   </div>
 
   <script>
+    // DOM refs
     const $ = (sel)=>document.querySelector(sel);
     const fromSel = $('#fromSel');
     const toSel   = $('#toSel');
@@ -124,14 +142,21 @@
     const totalBar = $('#totalBar');
     const totalPct = $('#totalPct');
 
+    // Map bootstrapping
     const map = L.map('map').setView([3.139, 101.6869], 12);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      attribution:'&copy; OpenStreetMap contributors'
+    }).addTo(map);
 
-    const stationCoords = new Map();   
-    const stationMarkers = new Map();  
+    // Station data and marker cache
+    const stationCoords = new Map();
+    const stationMarkers = new Map();
 
+    // Route polyline and live trains container
     let routeLine = null;
     const trains = new Map();
+
+    // Build a Leaflet icon for trains
     const iconTrain = (source)=> {
       const bg = (source==='gen') ? 'var(--train-gen)' : 'var(--train-built)';
       return L.divIcon({
@@ -144,6 +169,7 @@
 
     const activeRoute = { pathNames: [], geom: [], nameToLL: new Map() };
 
+    // Small helpers for feedback UI
     function showError(msg){ result.innerHTML = `<div class="error">${msg}</div>`; }
     function showOk({from,to,stops,time,price}){
       const timeStr = (time!=null) ? `${time}` : 'N/A';
@@ -156,6 +182,7 @@
         </div>`;
     }
 
+    // Fetch station list and draw gray dots
     async function loadStations(){
       fromSel.innerHTML = '<option>Loading…</option>';
       toSel.innerHTML   = '<option>Loading…</option>';
@@ -166,9 +193,11 @@
       fromSel.innerHTML = `<option value="">Select origin</option>` + opts;
       toSel.innerHTML   = `<option value="">Select destination</option>` + opts;
 
+      // Pre-select a sensible demo route for quick testing
       const trySet = (sel, name)=>{ const opt = Array.from(sel.options).find(o=>o.value.toLowerCase()===name.toLowerCase()); if(opt) sel.value = opt.value; };
       trySet(fromSel, 'KLCC'); trySet(toSel, 'Kajang');
 
+      // Cache coordinates and render station markers
       (js.data || []).forEach(s=>{
         const key = String(s.name).toLowerCase();
         if(s.latitude!=null && s.longitude!=null){
@@ -182,8 +211,10 @@
       });
     }
 
+    // Swap origin and destination selections
     swapBtn.onclick = ()=>{ const a = fromSel.value; fromSel.value = toSel.value; toSel.value = a; };
 
+    // Plan a route
     planBtn.onclick = async ()=>{
       const from = fromSel.value.trim();
       const to   = toSel.value.trim();
@@ -208,6 +239,7 @@
           price: (fRes.ok ? fJs.price : null)
         });
 
+        // Build small "chips" visual for the path
         const chips = [];
         for(let i=0;i<path.length;i++){
           const node = `<span class="chip">${path[i]}</span>`;
@@ -216,14 +248,17 @@
         }
         $('#pathChips').innerHTML = chips.join(' ');
 
+        // Convert route names to geometry
         buildRouteGeometry(path);
 
+        // Draw purple polyline and fit bounds
         if(routeLine){ map.removeLayer(routeLine); routeLine = null; }
         if(activeRoute.geom.length >= 2){
           routeLine = L.polyline(activeRoute.geom, {color:'var(--route)', weight:5, opacity:.95}).addTo(map);
           map.fitBounds(routeLine.getBounds(), {padding:[30,30]});
         }
 
+        // Reset progress UI
         totalBar.style.width = '0%';
         totalPct.textContent = '0%';
 
@@ -235,10 +270,12 @@
       }
     };
 
+    // Build list of lat/lng for the current path
     function buildRouteGeometry(path){
       activeRoute.geom = [];
       activeRoute.nameToLL = new Map();
 
+      // Try real coordinates for each station first
       const real = [];
       let allHave = true;
       for(const n of path){
@@ -249,6 +286,7 @@
       }
       if(allHave && real.length>=2){ activeRoute.geom = real; return; }
 
+      // Fallback which generate a straight-ish synthetic line if coords missing
       const A = L.latLng(3.20, 101.64);
       const B = L.latLng(3.00, 101.76);
       const N = Math.max(2, path.length);
@@ -262,12 +300,14 @@
       }
     }
 
+    // Built-in simulator controls
     simBtn.onclick = async ()=>{
       const from = fromSel.value.trim();
       const to   = toSel.value.trim();
       if(!from || !to){ showError('Please select origin and destination'); return; }
       simBtn.disabled = true; simBtn.textContent = 'Starting…';
       try{
+        // Ask backend to start a train that moves along the planned path
         const resp = await fetch('/simulate_train', {
           method:'POST',
           headers:{'Content-Type':'application/json'},
@@ -279,6 +319,7 @@
       finally{ simBtn.disabled = false; simBtn.textContent = 'Start Simulation'; }
     };
 
+    // Stop all running trains (which built-in)
     stopBtn.onclick = async ()=>{
       try{
         const list = await fetch('/trains').then(r=>r.json());
@@ -287,6 +328,7 @@
       }catch(e){ showError('Stop failed'); }
     };
 
+    // Realtime handling
     const ws = new WebSocket(`ws://${location.host}/ws`);
     ws.addEventListener('message', (ev)=>{
       try{
@@ -306,6 +348,7 @@
       }catch(e){}
     });
 
+    // Highlight current chip as the train enters a segment
     function updateChipsOnProgress(origin, dest, segProgress){
       const pathBox = document.getElementById('pathChips');
       if(!pathBox) return;
@@ -327,6 +370,7 @@
       }
     }
 
+    // Update overall trip % based on segment index and intra-segment progress
     function updateTotalProgress(origin, dest, segProgress){
       const path = activeRoute.pathNames || [];
       if(path.length < 2) return;
@@ -341,6 +385,7 @@
       totalPct.textContent = pct.toFixed(1) + '%';
     }
 
+    // Move a train marker linearly between segment endpoints
     function moveTrain(trainId, origin, dest, segProgress, source){
       const a = activeRoute.nameToLL.get(String(origin).toLowerCase());
       const b = activeRoute.nameToLL.get(String(dest).toLowerCase());
@@ -349,6 +394,7 @@
         lat = a.lat + (b.lat-a.lat) * Math.max(0,Math.min(1,segProgress));
         lng = a.lng + (b.lng-a.lng) * Math.max(0,Math.min(1,segProgress));
       }else{
+        // Fallback: look up by global station coords if route geometry not built yet
         const aa = stationCoords.get(String(origin).toLowerCase());
         const bb = stationCoords.get(String(dest).toLowerCase());
         if(!aa || !bb) return;
@@ -358,6 +404,7 @@
       placeTrain(trainId, lat, lng, source);
     }
 
+    // Create/update a train marker; keeps a single marker per train_id
     function placeTrain(id, lat, lng, source){
       let t = trains.get(id);
       const ic = iconTrain(source);
@@ -371,6 +418,7 @@
       }
     }
 
+    // Initial data load on page start
     loadStations();
   </script>
 </body>

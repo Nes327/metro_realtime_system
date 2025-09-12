@@ -7,8 +7,12 @@ from contextlib import contextmanager
 from typing import Dict, Iterable, Optional, Set, List, Tuple
 import re
 
+# Name normalization helpers
 def _name_key(s: str) -> str:
-    """normalize spaces/case/apostrophe; KEEP parentheses"""
+    """Normalize station names for matching: trim/collapse spaces, lower-case,
+    normalize apostrophes. IMPORTANT: keeps parentheses so variants like
+    'Masjid Jamek (KJL)' and 'Masjid Jamek (SBK)' stay distinct.
+    """
     if s is None:
         return ""
     s = str(s).replace("’", "'")
@@ -16,7 +20,9 @@ def _name_key(s: str) -> str:
 
 _PAREN = re.compile(r"\s*\([^)]*\)\s*")
 def _group_key(s: str) -> str:
-    """collapse key for stop counting (remove parentheses)"""
+    """A looser key for 'same physical stop' grouping: remove parentheses so
+    'Pasar Seni (SBK)' and 'Pasar Seni (KJL)' collapse to one group when
+    counting stops."""
     if s is None:
         return ""
     base = _PAREN.sub("", str(s))
@@ -25,6 +31,7 @@ def _group_key(s: str) -> str:
 
 @contextmanager
 def get_conn(db_path: str):
+    """Context-managed SQLite connection with row factory set to dict-like rows."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -33,10 +40,13 @@ def get_conn(db_path: str):
     finally:
         conn.close()
 
+# Generic CSV utilities
 def _norm(s: str) -> str:
+    """Lightweight header normalization used when probing column names."""
     return (s or "").strip().lower().replace(" ", "_")
 
 def _find_col(header: Iterable[str], candidates: Iterable[str]) -> Optional[str]:
+    """Find a column name from a variadic list of candidates (tolerant to spacing/case)."""
     if not header:
         return None
     norm_map = {_norm(h): h for h in header}
@@ -51,6 +61,7 @@ def _find_col(header: Iterable[str], candidates: Iterable[str]) -> Optional[str]
 
 _num = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
 def _to_float(x) -> Optional[float]:
+    """Best-effort numeric parsing from CSV cells (accepts '1,234', '2.5', etc.)."""
     if x is None:
         return None
     if isinstance(x, (int, float)):
@@ -60,8 +71,10 @@ def _to_float(x) -> Optional[float]:
     return float(m.group(0)) if m else None
 
 def _ensure_dir(p: str):
+    """Create directory if it doesn't exist."""
     os.makedirs(p, exist_ok=True)
 
+# Database schema
 DDL = """
 CREATE TABLE IF NOT EXISTS stations (
     station_id   INTEGER PRIMARY KEY,
@@ -102,13 +115,16 @@ CREATE INDEX IF NOT EXISTS idx_timepairs_from_to ON time_pairs(from_id, to_id);
 """
 
 def _create_tables(conn: sqlite3.Connection):
+    """Create tables and indexes idempotently."""
     conn.executescript(DDL)
 
 def _csv_path(data_dir: str, filename: str) -> Optional[str]:
+    """Utility: join data_dir with filename and check existence."""
     p = os.path.join(data_dir, filename)
     return p if os.path.exists(p) else None
 
 def _read_header_row_only(path: str) -> Optional[list]:
+    """Read only the first row (headers) from a CSV; tolerant to BOM."""
     if not path or not os.path.exists(path):
         return None
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
@@ -120,7 +136,11 @@ def _read_header_row_only(path: str) -> Optional[list]:
         header = [h.strip() for h in header if h and h.strip()]
         return header
 
+# Importers
 def import_stations(conn: sqlite3.Connection, data_dir: str) -> int:
+    """Seed stations from Fare.csv header/first column; fall back to Route/Time headers if needed.
+    Latitude/longitude are filled later by update_station_coords_from_files.
+    """
     fare_csv = _csv_path(data_dir, "Fare.csv")
     names: Set[str] = set()
 
@@ -128,13 +148,16 @@ def import_stations(conn: sqlite3.Connection, data_dir: str) -> int:
         with open(fare_csv, "r", encoding="utf-8-sig", newline="") as f:
             reader = csv.reader(f)
             header = next(reader, [])
+            # Add all origin names
             for line in reader:
                 if line and line[0].strip():
                     names.add(line[0].strip())
+            # Add all destination column headers
             for h in header[1:]:
                 if h.strip():
                     names.add(h.strip())
 
+    # Fallback to Route/Time headers in case Fare.csv missing
     if not names:
         for alt in ("Route.csv", "Time.csv"):
             hdr = _read_header_row_only(_csv_path(data_dir, alt))
@@ -153,11 +176,13 @@ def import_stations(conn: sqlite3.Connection, data_dir: str) -> int:
     return len(rows)
 
 def import_fares(conn: sqlite3.Connection, data_dir: str) -> int:
+    """Import pairwise fares from Fare.csv matrix (origin rows x destination columns)."""
     fare_csv = _csv_path(data_dir, "Fare.csv")
     if not fare_csv:
         print("[fares] Fare.csv not found, skip.")
         return 0
 
+    # Build name in id map for robust joins
     name_to_id: Dict[str, int] = {}
     for r in conn.execute("SELECT station_id, name FROM stations"):
         name_to_id[_name_key(r["name"])] = int(r["station_id"])
@@ -202,18 +227,25 @@ def import_fares(conn: sqlite3.Connection, data_dir: str) -> int:
     return len(rows)
 
 def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
+    """Import adjacency graph strictly from Route.csv sequences (bidirectional edges).
+    travel_time_min is filled from Time.csv where available; otherwise default weight.
+    Also add zero-cost transfer edges between stations that share the same _group_key
+    (e.g., 'Pasar Seni (KJL)' <-> 'Pasar Seni (SBK)').
+    """
     route_csv = _csv_path(data_dir, "Route.csv")
     if not route_csv or not os.path.exists(route_csv):
         print("[routes] Route.csv not found, skip.")
         return 0
     time_csv = _csv_path(data_dir, "Time.csv")
 
+    # Map station name in id
     name_to_id: Dict[str, int] = {}
     for r in conn.execute("SELECT station_id, name FROM stations"):
         name_to_id[_name_key(r["name"])] = int(r["station_id"])
     def id_of(nm: str) -> Optional[int]:
         return name_to_id.get(_name_key(nm))
 
+    # Build edges only between neighbors listed in each row sequence
     seq_edges: Set[Tuple[int, int]] = set()
     with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.reader(f)
@@ -232,6 +264,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
         print("[routes] No edges parsed from Route.csv.")
         return 0
 
+    # Time.csv map for per-edge minutes
     time_map: Dict[Tuple[str, str], float] = {}
     if time_csv and os.path.exists(time_csv):
         with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
@@ -258,10 +291,11 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
                         continue
                     time_map[(okey, dkey)] = t
 
+    # Create zero-time transfer edges between stations sharing same physical stop
     transfer_edges: Set[Tuple[int, int]] = set()
     base_groups: Dict[str, List[int]] = defaultdict(list)
     for r in conn.execute("SELECT station_id, name FROM stations"):
-        base_groups[_group_key(r["name"])].append(int(r["station_id"]))
+        base_groups[_group_key(r["name"])] = base_groups.get(_group_key(r["name"]), []) + [int(r["station_id"])]
     for ids in base_groups.values():
         if len(ids) >= 2:
             for i in range(len(ids)):
@@ -270,6 +304,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
                     transfer_edges.add((a, b))
                     transfer_edges.add((b, a))
 
+    # Persist edges with travel times (default = 1.0 min if not provided)
     rows = []
     DEFAULT_MIN = 1.0
     sel_name = "SELECT name FROM stations WHERE station_id=?"
@@ -281,6 +316,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
         w = float(tmin) if (tmin is not None and tmin > 0) else DEFAULT_MIN
         rows.append((u, v, w))
 
+    # Transfer edges of zero minute
     for u, v in transfer_edges:
         rows.append((u, v, 0.0))
 
@@ -290,179 +326,10 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     )
     print(f"[routes] imported edges: seq={len(seq_edges)} transfer={len(transfer_edges)} total_rows={len(rows)}")
     return len(rows)
-    route_csv = _csv_path(data_dir, "Route.csv")
-    if not route_csv or not os.path.exists(route_csv):
-        print("[routes] Route.csv not found, skip.")
-        return 0
-
-    time_csv = _csv_path(data_dir, "Time.csv")
-
-    # name -> id
-    name_to_id: Dict[str, int] = {}
-    for r in conn.execute("SELECT station_id, name FROM stations"):
-        name_to_id[_name_key(r["name"])] = int(r["station_id"])
-    def id_of(nm: str) -> Optional[int]:
-        return name_to_id.get(_name_key(nm))
-
-    # ---------- 1) parse Route.csv ----------
-    edges: Set[Tuple[int, int]] = set()
-    with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f)
-        for raw_row in reader:
-            seq = [c.strip() for c in raw_row if c and c.strip()]
-            if len(seq) < 2:
-                continue
-            for a, b in zip(seq, seq[1:]):
-                u, v = id_of(a), id_of(b)
-                if not u or not v:
-                    continue
-                edges.add((u, v))
-                edges.add((v, u))  # 双向
-
-    if not edges:
-        print("[routes] No edges parsed from Route.csv.")
-        return 0
-
-    # ---------- 2) build time map from Time.csv ----------
-    time_map: Dict[Tuple[str, str], float] = {}
-    if time_csv and os.path.exists(time_csv):
-        with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
-            treader = csv.reader(tf)
-            theader = next(treader, [])
-            dest_names = [h.strip() for h in theader[1:] if h and h.strip()]
-            dest_keys  = [_name_key(h) for h in dest_names]
-            for row in treader:
-                if not row:
-                    continue
-                oname = (row[0] or "").strip()
-                if not oname:
-                    continue
-                okey = _name_key(oname)
-                for j, dkey in enumerate(dest_keys, start=1):
-                    if j >= len(row):
-                        continue
-                    cell = str(row[j]).strip()
-                    if not cell or cell in {"-", "NA", "N/A"}:
-                        continue
-                    try:
-                        t = float(cell)
-                    except ValueError:
-                        continue
-                    time_map[(okey, dkey)] = t
-
-    # ---------- 3) write only edges from Route.csv ----------
-    rows = []
-    DEFAULT_MIN = 1.0
-    sel_name = "SELECT name FROM stations WHERE station_id=?"
-    for u, v in edges:
-        on = conn.execute(sel_name, (u,)).fetchone()["name"]
-        dn = conn.execute(sel_name, (v,)).fetchone()["name"]
-        tmin = time_map.get((_name_key(on), _name_key(dn)))
-        w = float(tmin) if (tmin is not None and tmin > 0) else DEFAULT_MIN
-        rows.append((u, v, w))
-
-    conn.executemany(
-        "INSERT OR REPLACE INTO routes(from_id, to_id, travel_time_min) VALUES (?,?,?)",
-        rows
-    )
-    print(f"[routes] imported edges from Route.csv only: {len(rows)}")
-    return len(rows)
-    route_csv = _csv_path(data_dir, "Route.csv")
-    if not route_csv or not os.path.exists(route_csv):
-        print("[routes] Route.csv not found, skip.")
-        return 0
-    time_csv = _csv_path(data_dir, "Time.csv")
-
-    name_to_id: Dict[str, int] = {}
-    for r in conn.execute("SELECT station_id, name FROM stations"):
-        name_to_id[_name_key(r["name"])] = int(r["station_id"])
-    def id_of(nm: str) -> Optional[int]:
-        return name_to_id.get(_name_key(nm))
-
-    # collect edges strictly within each sequence; never cross sequences
-    edges: Set[Tuple[int, int]] = set()
-
-    BRACKET_ALL = re.compile(r"\[(.+?)\]")
-    with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f)
-        for raw_row in reader:
-            row_text = " ".join(c for c in raw_row if c).strip()
-            if not row_text:
-                continue
-
-            seq_list: List[List[str]] = []
-
-            # 1) support multiple [ ... ] groups in one row
-            groups = [m.group(1) for m in BRACKET_ALL.finditer(row_text)]
-            if groups:
-                for g in groups:
-                    seq = [p.strip() for p in g.split(">") if p and p.strip()]
-                    if len(seq) >= 2:
-                        seq_list.append(seq)
-            else:
-                # 2) fallback: treat the whole row as a single comma-separated sequence
-                seq = [c.strip() for c in raw_row if c and c.strip()]
-                if len(seq) >= 2:
-                    seq_list.append(seq)
-
-            # add edges per sequence (bidirectional)
-            for seq in seq_list:
-                for a, b in zip(seq, seq[1:]):
-                    u, v = id_of(a), id_of(b)
-                    if not u or not v:
-                        continue
-                    edges.add((u, v))
-                    edges.add((v, u))
-
-    if not edges:
-        print("[routes] No edges parsed from Route.csv.")
-        return 0
-
-    # per-edge minutes from Time.csv (only used for adjacent edges we just built)
-    time_map: Dict[Tuple[str, str], float] = {}
-    if time_csv and os.path.exists(time_csv):
-        with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
-            treader = csv.reader(tf)
-            theader = next(treader, [])
-            dest_names = [h.strip() for h in theader[1:] if h and h.strip()]
-            dest_keys  = [_name_key(h) for h in dest_names]
-            for row in treader:
-                if not row:
-                    continue
-                oname = (row[0] or "").strip()
-                if not oname:
-                    continue
-                okey = _name_key(oname)
-                for j, dkey in enumerate(dest_keys, start=1):
-                    if j >= len(row):
-                        continue
-                    cell = str(row[j]).strip()
-                    if not cell or cell in {"-", "NA", "N/A"}:
-                        continue
-                    try:
-                        t = float(cell)
-                    except ValueError:
-                        continue
-                    time_map[(okey, dkey)] = t
-
-    rows = []
-    DEFAULT_MIN = 1.0
-    select_name = "SELECT name FROM stations WHERE station_id=?"
-    for u, v in edges:
-        on = conn.execute(select_name, (u,)).fetchone()["name"]
-        dn = conn.execute(select_name, (v,)).fetchone()["name"]
-        tmin = time_map.get((_name_key(on), _name_key(dn)))
-        w = float(tmin) if (tmin is not None and tmin > 0) else DEFAULT_MIN
-        rows.append((u, v, w))
-
-    conn.executemany(
-        "INSERT OR REPLACE INTO routes(from_id, to_id, travel_time_min) VALUES (?,?,?)",
-        rows
-    )
-    print(f"[routes] imported edges (sequence mode, directed): {len(rows)}")
-    return len(rows)
 
 def import_time_pairs(conn: sqlite3.Connection, data_dir: str) -> int:
+    """Import full pairwise direct travel times from Time.csv into time_pairs
+    so we can report 'direct total time' exactly as the spreadsheet shows."""
     time_csv = _csv_path(data_dir, "Time.csv")
     if not time_csv or not os.path.exists(time_csv):
         print("[time_pairs] Time.csv not found, skip.")
@@ -512,12 +379,15 @@ def import_time_pairs(conn: sqlite3.Connection, data_dir: str) -> int:
     print(f"[time_pairs] imported rows: {len(rows)}")
     return len(rows)
 
+# Database bootstrap
 def init_db(db_path: str, data_dir: str):
+    """Create tables and import data from CSVs on first run; otherwise reuse existing data."""
     _ensure_dir(os.path.dirname(db_path) or ".")
     _ensure_dir(data_dir)
     with get_conn(db_path) as conn:
         _create_tables(conn)
 
+        # Seed stations/fare/routes only if tables are empty
         c = conn.execute("SELECT COUNT(*) AS c FROM stations").fetchone()["c"]
         if c == 0:
             inserted = import_stations(conn, data_dir)
@@ -546,16 +416,20 @@ def init_db(db_path: str, data_dir: str):
         else:
             print(f"[time_pairs] already has {tp} rows")
 
+        # Coordinates are optional if file exists
         try:
             _ = update_station_coords_from_files(conn, data_dir)
         except Exception as e:
             print("[coords] import failed:", e)
 
+# Query helpers
 def get_all_stations(conn: sqlite3.Connection):
+    """Return all stations (id, name, lat/lng)."""
     cur = conn.execute("SELECT station_id, name, latitude, longitude FROM stations ORDER BY station_id")
     return [dict(r) for r in cur.fetchall()]
 
 def get_fare_between(conn: sqlite3.Connection, origin_id: int, destination_id: int) -> Optional[float]:
+    """Lookup fare between two stations by ID; None if not found."""
     cur = conn.execute(
         "SELECT price FROM fares WHERE origin_id=? AND destination_id=?",
         (origin_id, destination_id)
@@ -564,14 +438,19 @@ def get_fare_between(conn: sqlite3.Connection, origin_id: int, destination_id: i
     return float(row["price"]) if row else None
 
 def get_direct_time(conn: sqlite3.Connection, origin_id: int, destination_id: int) -> Optional[float]:
+    """Return matrix 'direct total time' from Time.csv (if present)."""
     row = conn.execute(
         "SELECT total_min FROM time_pairs WHERE from_id=? AND to_id=?",
         (origin_id, destination_id)
     ).fetchone()
     return float(row["total_min"]) if row else None
 
+# Path post-processing
 def _collapse_stops(names: List[str]) -> List[str]:
-    """consecutive duplicates by _group_key removed (for stop counting only)"""
+    """Collapse consecutive station names that share the same _group_key.
+    Used only for stop counting so an interchange like 'Pasar Seni (SBK)->(KJL)'
+    counts as one stop rather than two.
+    """
     if not names:
         return []
     out = [names[0]]
@@ -583,12 +462,15 @@ def _collapse_stops(names: List[str]) -> List[str]:
             last_g = g
     return out
 
+# Core routing
 def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id: int, mode: str = "stops"):
     """
-    mode='stops' -> BFS
-    mode='time'  -> Dijkstra
-    total_stops counts collapsed interchanges as one stop
+    Compute a route on the directed graph 'routes':
+      - mode='stops' : BFS with unit weights (fewest edges)
+      - mode='time'  : Dijkstra using travel_time_min (0 allowed for transfers)
+    For reporting, total_stops uses collapsed interchange logic (_group_key).
     """
+    # Build adjacency from_id to list
     adj: Dict[int, List[Tuple[int, float]]] = defaultdict(list)
     cur = conn.execute("SELECT from_id, to_id, COALESCE(travel_time_min, 0) AS w FROM routes")
     for row in cur.fetchall():
@@ -597,10 +479,12 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
             w = 0.0
         adj[u].append((v, w))
 
+    # input validation
     id2name = {int(r["station_id"]): str(r["name"]) for r in conn.execute("SELECT station_id, name FROM stations")}
     if origin_id not in id2name or destination_id not in id2name:
         return None
 
+    # fewest stops
     if mode == "stops":
         q = deque([origin_id])
         prev = {origin_id: None}
@@ -614,6 +498,7 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
                     q.append(v)
         if destination_id not in prev:
             return None
+        # Reconstruct path
         path = []
         x = destination_id
         while x is not None:
@@ -629,6 +514,7 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
             "total_time": None
         }
 
+    # shortest time
     if mode == "time":
         dist = {origin_id: 0.0}
         prev = {origin_id: None}
@@ -648,6 +534,8 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
 
         if destination_id not in prev and destination_id != origin_id:
             return None
+
+        # Reconstruct path and compute reported metrics
         path = []
         x = destination_id
         while x is not None:
@@ -665,10 +553,12 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
             "total_stops": max(0, len(names_collapsed) - 1),
             "total_time": float(direct if direct is not None else total_sum)
         }
-
     return None
 
+# Optional coordinate importer
 def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) -> int:
+    """Load station coordinates from either stations_coords.csv or Station.xlsx and
+    update stations table. Safe to run multiple times."""
     import_path_csv  = os.path.join(data_dir, "stations_coords.csv")
     import_path_xlsx = os.path.join(data_dir, "Station.xlsx")
 
@@ -676,6 +566,7 @@ def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) ->
     src  = None
 
     if os.path.exists(import_path_csv):
+        # CSV path
         with open(import_path_csv, "r", encoding="utf-8-sig", newline="") as f:
             r = csv.DictReader(f)
             for row in r:
@@ -691,6 +582,7 @@ def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) ->
         src = "csv"
 
     elif os.path.exists(import_path_xlsx):
+        # Excel path
         try:
             import pandas as pd
             df = pd.read_excel(import_path_xlsx)
@@ -720,6 +612,7 @@ def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) ->
         print(f"[coords] no valid rows in {src} file")
         return 0
 
+    # Update rows matched by normalized name
     name_to_id = {}
     for r in conn.execute("SELECT station_id, name FROM stations"):
         name_to_id[_name_key(r["name"])] = int(r["station_id"])

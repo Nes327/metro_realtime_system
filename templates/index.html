@@ -17,15 +17,15 @@
       --route:#7c3aed;       /* polyline (purple) */
       --train-built:#0ea5a4; /* teal (built-in) */
       --train-gen:#ea580c;   /* orange (generator) */
-      --chip:#374151;        /* gray chips */
+      --chip:#6b7280;        /* gray chips */
       --chip-hi:#111827;     /* chip highlight */
     }
     html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,Arial}
     .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
-    h1{font-weight:800;letter-spacing:.4px;margin:0 0 4px}
-    .sub{color:var(--muted);margin:0 0 18px;font-size:14px}
-    .grid{display:grid;grid-template-columns:1fr;gap:16px}
-    @media(min-width:980px){ .grid{grid-template-columns:1fr 1fr;gap:18px} }
+    h1{font-weight:800;letter-spacing:.4px;margin:0 0 6px}
+    .sub{color:var(--muted);margin:0 0 16px;font-size:14px}
+
+    /* single column layout */
     .card{background:var(--card);border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.08);padding:16px}
 
     label{display:block;font-size:14px;color:#374151;margin:6px 0}
@@ -33,6 +33,9 @@
       width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;
       font-size:15px;background:#fff;outline:none;
     }
+    .grid2{display:grid;grid-template-columns:1fr;gap:12px}
+    @media(min-width:720px){ .grid2{grid-template-columns:1fr 1fr;gap:16px} }
+
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     button{
       padding:10px 14px;border-radius:12px;border:0;background:var(--primary);color:#fff;
@@ -41,16 +44,19 @@
     button.secondary{background:#111;}
     button.warn{background:#9a3412;}
     button:disabled{opacity:.6;cursor:not-allowed}
+
     .muted{color:var(--muted);font-size:13px}
-    .mono{font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .ok{background:#f1f5f9;border:1px solid #e2e8f0;color:#0f172a;padding:10px;border-radius:10px}
+    .error{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;padding:10px;border-radius:10px}
+
     .path{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
     .chip{background:var(--chip);color:#fff;border-radius:999px;padding:6px 10px;font-size:13px;transition:.15s}
     .chip.active{background:var(--chip-hi)}
     .arrow{opacity:.35}
-    .error{background:#fee2e2;border:1px solid #fecaca;color:#991b1b;padding:10px;border-radius:10px}
-    .ok{background:#f1f5f9;border:1px solid #e2e8f0;color:#0f172a;padding:10px;border-radius:10px}
+
     .bar{background:#e5e7eb;border-radius:8px;overflow:hidden;height:14px;margin:10px 0 6px}
     .bar > div{background:var(--primary);height:100%;width:0%}
+
     #map{height:420px;border-radius:12px;border:1px solid #e5e7eb}
 
     /* train icons: colored dots without text */
@@ -60,7 +66,10 @@
     .train-built{background:var(--train-built)}
     .train-gen{background:var(--train-gen)}
 
-    /* collapsible ws panel */
+    .legend{display:flex;gap:14px;align-items:center;margin:8px 0 0;font-size:13px;color:#374151;flex-wrap:wrap}
+    .dot{display:inline-block;width:12px;height:12px;border-radius:50%}
+
+    /* collapsible ws panel at bottom */
     details.ws {margin-top:16px}
     details.ws > summary{
       list-style:none;background:#111;color:#fff;padding:10px 12px;border-radius:12px;cursor:pointer;
@@ -69,8 +78,6 @@
     details.ws[open] > summary{border-bottom-left-radius:0;border-bottom-right-radius:0}
     .wsbox{background:#0f1115;color:#8bf0c8;border-bottom-left-radius:12px;border-bottom-right-radius:12px;
       padding:10px;font-size:12px;min-height:100px;white-space:pre-wrap}
-    .legend{display:flex;gap:14px;align-items:center;margin:8px 0 0;font-size:13px;color:#374151;flex-wrap:wrap}
-    .dot{display:inline-block;width:12px;height:12px;border-radius:50%}
   </style>
 </head>
 <body>
@@ -78,56 +85,47 @@
     <h1>Metro Realtime — Route Planner</h1>
     <p class="sub">Pick origin and destination, plan the route and fare; the map highlights the path and animates a train.</p>
 
-    <div class="grid">
-      <div class="card">
-        <div class="grid">
-          <div>
-            <label for="fromSel">From (origin)</label>
-            <select id="fromSel"></select>
-          </div>
-          <div>
-            <label for="toSel">To (destination)</label>
-            <select id="toSel"></select>
-          </div>
+    <div class="card">
+      <div class="grid2">
+        <div>
+          <label for="fromSel">From (origin)</label>
+          <select id="fromSel"></select>
         </div>
-
-        <div class="row" style="margin:12px 0 6px">
-          <button id="planBtn">Plan Route</button>
-          <button id="swapBtn" class="secondary" title="Swap">↔ Swap</button>
-          <button id="simBtn" style="background:var(--train-built)">Start Simulation</button>
-          <button id="stopBtn" class="warn">Stop All Trains</button>
-        </div>
-
-        <p class="muted">Data from <span class="mono">/stations</span>, <span class="mono">/route_by_name</span>, <span class="mono">/fare_by_name</span>; realtime via <span class="mono">/ws</span>.</p>
-
-        <div id="result" style="margin-top:8px"></div>
-
-        <div style="margin-top:10px">
-          <div class="bar"><div id="totalBar" style="width:0%"></div></div>
-          <div class="muted">Trip progress <span id="totalPct">0%</span></div>
-        </div>
-
-        <div class="legend">
-          <span class="dot" style="background:var(--route)"></span> Route
-          <span class="dot" style="background:#6b7280"></span> Station
-          <span class="dot" style="background:var(--train-built)"></span> Built-in train
-          <span class="dot" style="background:var(--train-gen)"></span> Generator train
-        </div>
-
-        <div id="map" style="margin-top:10px"></div>
-
-        <!-- Collapsible realtime panel, default closed -->
-        <details class="ws">
-          <summary>Realtime (WebSocket) <span id="wsStatus" style="font-weight:400;opacity:.8">— collapsed</span></summary>
-          <div class="wsbox" id="wsLog"></div>
-        </details>
-      </div>
-
-      <div class="card">
-        <div id="routePanel">
-          <p class="muted">Route details appear on the left after planning. This column is kept minimal for a tidy layout.</p>
+        <div>
+          <label for="toSel">To (destination)</label>
+          <select id="toSel"></select>
         </div>
       </div>
+
+      <div class="row" style="margin:12px 0 6px">
+        <button id="planBtn">Plan Route</button>
+        <button id="swapBtn" class="secondary" title="Swap">↔ Swap</button>
+        <button id="simBtn" style="background:var(--train-built)">Start Simulation</button>
+        <button id="stopBtn" class="warn">Stop All Trains</button>
+      </div>
+
+      <!-- result area -->
+      <div id="result" style="margin-top:8px"></div>
+
+      <div style="margin-top:10px">
+        <div class="bar"><div id="totalBar" style="width:0%"></div></div>
+        <div class="muted">Trip progress <span id="totalPct">0%</span></div>
+      </div>
+
+      <div class="legend">
+        <span class="dot" style="background:var(--route)"></span> Route
+        <span class="dot" style="background:#6b7280"></span> Station
+        <span class="dot" style="background:var(--train-built)"></span> Built-in train
+        <span class="dot" style="background:var(--train-gen)"></span> Generator train
+      </div>
+
+      <div id="map" style="margin-top:10px"></div>
+
+      <!-- Collapsible realtime panel, default closed -->
+      <details class="ws">
+        <summary>Realtime (WebSocket) <span id="wsStatus" style="font-weight:400;opacity:.8">— collapsed</span></summary>
+        <div class="wsbox" id="wsLog"></div>
+      </details>
     </div>
   </div>
 
@@ -163,7 +161,17 @@
     const activeRoute = { pathNames: [], geom: [], nameToLL: new Map() };
 
     function showError(msg){ result.innerHTML = `<div class="error">${msg}</div>`; }
-    function showOk(html){ result.innerHTML = `<div class="ok">${html}<div class="path" id="pathChips" style="margin-top:10px"></div></div>`; }
+
+    function showOk({from,to,stops,time,price}){
+      const timeStr = (time!=null) ? `${time}` : 'N/A';
+      const fareStr = (price!=null) ? `RM ${Number(price).toFixed(2)}` : 'N/A';
+      result.innerHTML = `<div class="ok">
+          <div>From <b>${from}</b> to <b>${to}</b></div>
+          <div style="margin-top:4px;">Via: <b>${stops}</b> stops</div>
+          <div style="margin-top:4px;">Time: <b>${timeStr}</b> min, Fare: <b>${fareStr}</b></div>
+          <div class="path" id="pathChips" style="margin-top:10px"></div>
+        </div>`;
+    }
 
     /* load stations (gray markers) */
     async function loadStations(){
@@ -212,9 +220,12 @@
         const path = rJs.path_names || [];
         activeRoute.pathNames = path;
 
-        const farePart = (fRes.ok && fJs.price!=null) ? `, fare <b>RM ${Number(fJs.price).toFixed(2)}</b>` : '';
-        const timePart = (rJs.total_time!=null) ? `, time <b>${rJs.total_time}</b> min` : '';
-        showOk(`From <b>${from}</b> to <b>${to}</b>, via <b>${rJs.total_stops}</b> stops${timePart}${farePart}`);
+        showOk({
+          from, to,
+          stops: rJs.total_stops,
+          time:  rJs.total_time,
+          price: (fRes.ok ? fJs.price : null)
+        });
 
         /* chips (all gray) */
         const chips = [];
@@ -334,7 +345,7 @@
       }catch(e){ log('[ws] ' + ev.data); }
     });
 
-    /* chips & progress (highlight current station only) */
+    /* chips & progress (highlight origin when entering, dest when nearly arrived) */
     function updateChipsOnProgress(origin, dest, segProgress){
       const pathBox = document.getElementById('pathChips');
       if(!pathBox) return;
@@ -354,7 +365,6 @@
         if(ch) ch.classList.add('active');
         return;
       }
-      // mid-segment: no special chip highlight
     }
 
     function updateTotalProgress(origin, dest, segProgress){

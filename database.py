@@ -1,4 +1,3 @@
-# database.py
 import csv
 import os
 import sqlite3
@@ -8,7 +7,6 @@ from contextlib import contextmanager
 from typing import Dict, Iterable, Optional, Set, List, Tuple
 import re
 
-# ---------- name keys ----------
 def _name_key(s: str) -> str:
     """normalize spaces/case/apostrophe; KEEP parentheses"""
     if s is None:
@@ -35,7 +33,6 @@ def get_conn(db_path: str):
     finally:
         conn.close()
 
-# ---------- utils ----------
 def _norm(s: str) -> str:
     return (s or "").strip().lower().replace(" ", "_")
 
@@ -65,7 +62,6 @@ def _to_float(x) -> Optional[float]:
 def _ensure_dir(p: str):
     os.makedirs(p, exist_ok=True)
 
-# ---------- DDL ----------
 DDL = """
 CREATE TABLE IF NOT EXISTS stations (
     station_id   INTEGER PRIMARY KEY,
@@ -108,7 +104,6 @@ CREATE INDEX IF NOT EXISTS idx_timepairs_from_to ON time_pairs(from_id, to_id);
 def _create_tables(conn: sqlite3.Connection):
     conn.executescript(DDL)
 
-# ---------- CSV helpers ----------
 def _csv_path(data_dir: str, filename: str) -> Optional[str]:
     p = os.path.join(data_dir, filename)
     return p if os.path.exists(p) else None
@@ -125,7 +120,6 @@ def _read_header_row_only(path: str) -> Optional[list]:
         header = [h.strip() for h in header if h and h.strip()]
         return header
 
-# ---------- import: stations ----------
 def import_stations(conn: sqlite3.Connection, data_dir: str) -> int:
     fare_csv = _csv_path(data_dir, "Fare.csv")
     names: Set[str] = set()
@@ -158,7 +152,6 @@ def import_stations(conn: sqlite3.Connection, data_dir: str) -> int:
     )
     return len(rows)
 
-# ---------- import: fares ----------
 def import_fares(conn: sqlite3.Connection, data_dir: str) -> int:
     fare_csv = _csv_path(data_dir, "Fare.csv")
     if not fare_csv:
@@ -208,7 +201,6 @@ def import_fares(conn: sqlite3.Connection, data_dir: str) -> int:
     print(f"[fares] imported rows: {len(rows)}")
     return len(rows)
 
-# ---------- import: routes (edges + per-edge minutes) ----------
 def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     route_csv = _csv_path(data_dir, "Route.csv")
     if not route_csv or not os.path.exists(route_csv):
@@ -216,19 +208,16 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
         return 0
     time_csv = _csv_path(data_dir, "Time.csv")
 
-    # name -> id（keep parentheses）
     name_to_id: Dict[str, int] = {}
     for r in conn.execute("SELECT station_id, name FROM stations"):
         name_to_id[_name_key(r["name"])] = int(r["station_id"])
     def id_of(nm: str) -> Optional[int]:
         return name_to_id.get(_name_key(nm))
 
-    # ---------- 1) 仅按 Route.csv 顺序连相邻边（双向） ----------
     seq_edges: Set[Tuple[int, int]] = set()
     with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.reader(f)
         for raw_row in reader:
-            # 只按逗号序列；如果你存了 [ A > B > ... ] 也可按之前逻辑加一段解析
             seq = [c.strip() for c in raw_row if c and c.strip()]
             if len(seq) < 2:
                 continue
@@ -243,7 +232,6 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
         print("[routes] No edges parsed from Route.csv.")
         return 0
 
-    # ---------- 2) Time.csv 只作为相邻边的分钟数查表 ----------
     time_map: Dict[Tuple[str, str], float] = {}
     if time_csv and os.path.exists(time_csv):
         with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
@@ -270,27 +258,22 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
                         continue
                     time_map[(okey, dkey)] = t
 
-    # ---------- 3) 为“同名（去括号）”的一组站增加 0 分钟的换乘边 ----------
-    #    例：Pasar Seni (KJL) <-> Pasar Seni (SBK)
     transfer_edges: Set[Tuple[int, int]] = set()
     base_groups: Dict[str, List[int]] = defaultdict(list)
     for r in conn.execute("SELECT station_id, name FROM stations"):
         base_groups[_group_key(r["name"])].append(int(r["station_id"]))
     for ids in base_groups.values():
         if len(ids) >= 2:
-            # 完全图（双向），表示同一地名的站台可无代价互达
             for i in range(len(ids)):
                 for j in range(i+1, len(ids)):
                     a, b = ids[i], ids[j]
                     transfer_edges.add((a, b))
                     transfer_edges.add((b, a))
 
-    # ---------- 4) 写 routes ----------
     rows = []
     DEFAULT_MIN = 1.0
     sel_name = "SELECT name FROM stations WHERE station_id=?"
 
-    # 序列边：用 Time.csv 的分钟；缺失用默认值
     for u, v in seq_edges:
         on = conn.execute(sel_name, (u,)).fetchone()["name"]
         dn = conn.execute(sel_name, (v,)).fetchone()["name"]
@@ -298,7 +281,6 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
         w = float(tmin) if (tmin is not None and tmin > 0) else DEFAULT_MIN
         rows.append((u, v, w))
 
-    # 换乘边：0 分钟
     for u, v in transfer_edges:
         rows.append((u, v, 0.0))
 
@@ -480,7 +462,6 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     print(f"[routes] imported edges (sequence mode, directed): {len(rows)}")
     return len(rows)
 
-# ---------- import: Time.csv matrix to time_pairs ----------
 def import_time_pairs(conn: sqlite3.Connection, data_dir: str) -> int:
     time_csv = _csv_path(data_dir, "Time.csv")
     if not time_csv or not os.path.exists(time_csv):
@@ -531,7 +512,6 @@ def import_time_pairs(conn: sqlite3.Connection, data_dir: str) -> int:
     print(f"[time_pairs] imported rows: {len(rows)}")
     return len(rows)
 
-# ---------- DB init ----------
 def init_db(db_path: str, data_dir: str):
     _ensure_dir(os.path.dirname(db_path) or ".")
     _ensure_dir(data_dir)
@@ -571,7 +551,6 @@ def init_db(db_path: str, data_dir: str):
         except Exception as e:
             print("[coords] import failed:", e)
 
-# ---------- queries ----------
 def get_all_stations(conn: sqlite3.Connection):
     cur = conn.execute("SELECT station_id, name, latitude, longitude FROM stations ORDER BY station_id")
     return [dict(r) for r in cur.fetchall()]
@@ -591,7 +570,6 @@ def get_direct_time(conn: sqlite3.Connection, origin_id: int, destination_id: in
     ).fetchone()
     return float(row["total_min"]) if row else None
 
-# ---------- path helpers ----------
 def _collapse_stops(names: List[str]) -> List[str]:
     """consecutive duplicates by _group_key removed (for stop counting only)"""
     if not names:
@@ -605,7 +583,6 @@ def _collapse_stops(names: List[str]) -> List[str]:
             last_g = g
     return out
 
-# ---------- routing ----------
 def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id: int, mode: str = "stops"):
     """
     mode='stops' -> BFS
@@ -624,7 +601,6 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
     if origin_id not in id2name or destination_id not in id2name:
         return None
 
-    # BFS
     if mode == "stops":
         q = deque([origin_id])
         prev = {origin_id: None}
@@ -653,7 +629,6 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
             "total_time": None
         }
 
-    # Dijkstra
     if mode == "time":
         dist = {origin_id: 0.0}
         prev = {origin_id: None}
@@ -693,7 +668,6 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
 
     return None
 
-# ---------- coords import ----------
 def update_station_coords_from_files(conn: sqlite3.Connection, data_dir: str) -> int:
     import_path_csv  = os.path.join(data_dir, "stations_coords.csv")
     import_path_xlsx = os.path.join(data_dir, "Station.xlsx")

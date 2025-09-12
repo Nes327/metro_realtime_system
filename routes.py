@@ -1,11 +1,9 @@
-# routes.py
 from flask import Blueprint, jsonify, request, current_app
 from database import get_conn, get_all_stations, get_fare_between, get_route_shortest
 from realtime import start_train, stop_train, list_trains
 from database import _name_key
 import time
 
-# Helper: map station name -> id
 def _name_to_id_map(conn):
     rows = conn.execute("SELECT station_id, name FROM stations").fetchall()
     return {_name_key(r["name"]): int(r["station_id"]) for r in rows}

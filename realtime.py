@@ -1,4 +1,3 @@
-# realtime.py
 import json
 import threading
 import time
@@ -9,7 +8,6 @@ from flask_sock import Sock
 
 sock = Sock()
 
-# Connected WebSocket clients
 _clients_lock = threading.Lock()
 _clients: List[Any] = []
 
@@ -23,31 +21,22 @@ def init_realtime(app):
 
     @sock.route('/ws')
     def ws_handler(ws):
-        # Register client
         with _clients_lock:
             _clients.append(ws)
         try:
-            # Greet on connect
             ws.send(json.dumps({"type": "hello", "msg": "hello from server (train realtime ready)"}))
             while True:
-                # Wait for client message (plain echo or train_update from data_generator.py)
                 msg = ws.receive()
                 if msg is None:
                     break
-                # Try parse JSON if it's plain text
                 try:
                     js = json.loads(msg)
-                    # Broadcast if it is the generic format: type = "train_update"
                     if isinstance(js, dict) and js.get("type") == "train_update":
-                        _broadcast(js)  # broadcast to all clients (including frontend)
-                    else:
-                        # Echo for debugging
+                        _broadcast(js)  
                         ws.send(msg)
                 except Exception:
-                    # Non-JSON, echo back
                     ws.send(msg)
         finally:
-            # Unregister client
             with _clients_lock:
                 if ws in _clients:
                     _clients.remove(ws)
@@ -72,7 +61,7 @@ def _broadcast(obj: Dict[str, Any]):
                 pass
 
 
-# ---------------- Built-in background train simulator (kept as-is; emits train_tick) ----------------
+#Train simulator
 class TrainThread(threading.Thread):
     def __init__(self, train_id: str, path_names: List[str], per_edge_seconds: List[float], loop=True, ping_interval=1.0):
         super().__init__(daemon=True)
@@ -85,7 +74,6 @@ class TrainThread(threading.Thread):
 
     def run(self):
         try:
-            # Notify start
             _broadcast({"type": "train_status", "train_id": self.train_id, "status": "started"})
             while not self._stop.is_set():
                 for idx in range(len(self.path) - 1):
@@ -118,7 +106,6 @@ class TrainThread(threading.Thread):
 _trains: Dict[str, TrainThread] = {}
 
 def start_train(train_id: str, path_names: List[str], per_edge_seconds: List[float], loop=True, ping_interval=1.0):
-    # Stop same-named train
     if train_id in _trains:
         try:
             _trains[train_id].stop()

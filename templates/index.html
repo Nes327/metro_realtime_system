@@ -1,31 +1,29 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Metro Realtime — Route & Fare</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     :root{
-      --bg:#f7f3e8;          /* beige */
+      --bg:#f7f3e8;     
       --card:#ffffff;
       --muted:#6b7280;
       --text:#111827;
-      --primary:#2563eb;     /* buttons */
-      --route:#7c3aed;       /* polyline (purple) */
-      --train-built:#0ea5a4; /* teal (built-in) */
-      --train-gen:#ea580c;   /* orange (generator) */
-      --chip:#6b7280;        /* gray chips */
-      --chip-hi:#111827;     /* chip highlight */
+      --primary:#2563eb;    
+      --route:#7c3aed;   
+      --train-built:#0ea5a4; 
+      --train-gen:#ea580c;   
+      --chip:#6b7280;        
+      --chip-hi:#111827;     
     }
     html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,Arial}
     .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
     h1{font-weight:800;letter-spacing:.4px;margin:0 0 6px}
     .sub{color:var(--muted);margin:0 0 16px;font-size:14px}
 
-    /* single column layout */
     .card{background:var(--card);border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.08);padding:16px}
 
     label{display:block;font-size:14px;color:#374151;margin:6px 0}
@@ -59,25 +57,17 @@
 
     #map{height:420px;border-radius:12px;border:1px solid #e5e7eb}
 
-    /* train icons: colored dots without text */
-    .train-dot{
-      width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.2)
+    .leaflet-interactive.station { stroke:#6b7280; fill:#6b7280; }
+
+    .train-badge{
+      display:inline-flex;align-items:center;justify-content:center;
+      width:26px;height:20px;border-radius:999px;
+      color:#fff;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.25);
+      font-size:14px;line-height:1;
     }
-    .train-built{background:var(--train-built)}
-    .train-gen{background:var(--train-gen)}
 
     .legend{display:flex;gap:14px;align-items:center;margin:8px 0 0;font-size:13px;color:#374151;flex-wrap:wrap}
     .dot{display:inline-block;width:12px;height:12px;border-radius:50%}
-
-    /* collapsible ws panel at bottom */
-    details.ws {margin-top:16px}
-    details.ws > summary{
-      list-style:none;background:#111;color:#fff;padding:10px 12px;border-radius:12px;cursor:pointer;
-      font-weight:600;display:flex;align-items:center;justify-content:space-between;
-    }
-    details.ws[open] > summary{border-bottom-left-radius:0;border-bottom-right-radius:0}
-    .wsbox{background:#0f1115;color:#8bf0c8;border-bottom-left-radius:12px;border-bottom-right-radius:12px;
-      padding:10px;font-size:12px;min-height:100px;white-space:pre-wrap}
   </style>
 </head>
 <body>
@@ -104,7 +94,6 @@
         <button id="stopBtn" class="warn">Stop All Trains</button>
       </div>
 
-      <!-- result area -->
       <div id="result" style="margin-top:8px"></div>
 
       <div style="margin-top:10px">
@@ -120,17 +109,10 @@
       </div>
 
       <div id="map" style="margin-top:10px"></div>
-
-      <!-- Collapsible realtime panel, default closed -->
-      <details class="ws">
-        <summary>Realtime (WebSocket) <span id="wsStatus" style="font-weight:400;opacity:.8">— collapsed</span></summary>
-        <div class="wsbox" id="wsLog"></div>
-      </details>
     </div>
   </div>
 
   <script>
-    /* refs */
     const $ = (sel)=>document.querySelector(sel);
     const fromSel = $('#fromSel');
     const toSel   = $('#toSel');
@@ -142,26 +124,27 @@
     const totalBar = $('#totalBar');
     const totalPct = $('#totalPct');
 
-    /* map */
     const map = L.map('map').setView([3.139, 101.6869], 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
 
-    /* stations */
-    const stationCoords = new Map();   // name(lower) -> {lat,lng}
-    const stationMarkers = new Map();  // name(lower) -> marker
+    const stationCoords = new Map();   
+    const stationMarkers = new Map();  
 
-    /* route & trains */
     let routeLine = null;
-    const trains = new Map(); // id -> {marker, source}
-    const iconTrain = (source)=> L.divIcon({
-      className:'', html:`<div class="train-dot ${source==='gen'?'train-gen':'train-built'}"></div>`,
-      iconSize:[18,18], iconAnchor:[9,9]
-    });
+    const trains = new Map();
+    const iconTrain = (source)=> {
+      const bg = (source==='gen') ? 'var(--train-gen)' : 'var(--train-built)';
+      return L.divIcon({
+        className:'',
+        html:`<div class="train-badge" style="background:${bg}">🚆</div>`,
+        iconSize:[28,22],
+        iconAnchor:[14,11]
+      });
+    };
 
     const activeRoute = { pathNames: [], geom: [], nameToLL: new Map() };
 
     function showError(msg){ result.innerHTML = `<div class="error">${msg}</div>`; }
-
     function showOk({from,to,stops,time,price}){
       const timeStr = (time!=null) ? `${time}` : 'N/A';
       const fareStr = (price!=null) ? `RM ${Number(price).toFixed(2)}` : 'N/A';
@@ -173,7 +156,6 @@
         </div>`;
     }
 
-    /* load stations (gray markers) */
     async function loadStations(){
       fromSel.innerHTML = '<option>Loading…</option>';
       toSel.innerHTML   = '<option>Loading…</option>';
@@ -191,18 +173,17 @@
         const key = String(s.name).toLowerCase();
         if(s.latitude!=null && s.longitude!=null){
           stationCoords.set(key, {lat:s.latitude, lng:s.longitude});
-          const color = '#6b7280'; // gray
-          const m = L.circleMarker([s.latitude, s.longitude], {radius:4, weight:1, color:color, fillColor:color, fillOpacity:.95})
-            .bindTooltip(s.name).addTo(map);
+          const color = '#6b7280';
+          const m = L.circleMarker([s.latitude, s.longitude], {
+            radius:4, weight:1, color:color, fillColor:color, fillOpacity:.95
+          }).bindTooltip(s.name).addTo(map);
           stationMarkers.set(key, m);
         }
       });
     }
 
-    /* swap */
     swapBtn.onclick = ()=>{ const a = fromSel.value; fromSel.value = toSel.value; toSel.value = a; };
 
-    /* plan route: always mode=time */
     planBtn.onclick = async ()=>{
       const from = fromSel.value.trim();
       const to   = toSel.value.trim();
@@ -227,7 +208,6 @@
           price: (fRes.ok ? fJs.price : null)
         });
 
-        /* chips (all gray) */
         const chips = [];
         for(let i=0;i<path.length;i++){
           const node = `<span class="chip">${path[i]}</span>`;
@@ -236,10 +216,8 @@
         }
         $('#pathChips').innerHTML = chips.join(' ');
 
-        /* geometry */
         buildRouteGeometry(path);
 
-        /* polyline (purple) */
         if(routeLine){ map.removeLayer(routeLine); routeLine = null; }
         if(activeRoute.geom.length >= 2){
           routeLine = L.polyline(activeRoute.geom, {color:'var(--route)', weight:5, opacity:.95}).addTo(map);
@@ -257,7 +235,6 @@
       }
     };
 
-    /* build geometry (real coords if available, else synthetic) */
     function buildRouteGeometry(path){
       activeRoute.geom = [];
       activeRoute.nameToLL = new Map();
@@ -285,7 +262,6 @@
       }
     }
 
-    /* simulator */
     simBtn.onclick = async ()=>{
       const from = fromSel.value.trim();
       const to   = toSel.value.trim();
@@ -299,7 +275,6 @@
         });
         const js = await resp.json();
         if(!resp.ok){ showError('Start failed: ' + (js.error || '')); }
-        else{ log(`[train] ${js.train_id} started (built-in)`); }
       }catch(e){ showError('Request failed'); }
       finally{ simBtn.disabled = false; simBtn.textContent = 'Start Simulation'; }
     };
@@ -309,43 +284,28 @@
         const list = await fetch('/trains').then(r=>r.json());
         const ids = list.trains || [];
         await Promise.all(ids.map(id=>fetch('/trains/'+encodeURIComponent(id), {method:'DELETE'})));
-        log('stopped all built-in trains');
       }catch(e){ showError('Stop failed'); }
     };
 
-    /* WebSocket (collapsed panel at bottom) */
     const ws = new WebSocket(`ws://${location.host}/ws`);
-    const wsStatus = $('#wsStatus');
-    const wsLog = $('#wsLog');
-    const log = (t)=>{ if(wsLog){ wsLog.textContent += t + "\n"; wsLog.scrollTop = wsLog.scrollHeight; } };
-    ws.addEventListener('open', ()=>{ wsStatus.textContent='connected'; log('[ws] open'); });
-    ws.addEventListener('close', ()=>{ wsStatus.textContent='closed'; log('[ws] close'); });
-    ws.addEventListener('error', ()=>{ wsStatus.textContent='error'; log('[ws] error'); });
-
     ws.addEventListener('message', (ev)=>{
       try{
         const js = JSON.parse(ev.data);
-        if(js.type === 'hello'){ log('[ws] ' + js.msg); return; }
-
         if(js.type === 'train_tick'){
-          // Built-in train: teal
           updateChipsOnProgress(js.origin, js.dest, js.progress);
           updateTotalProgress(js.origin, js.dest, js.progress);
           moveTrain(js.train_id, js.origin, js.dest, js.progress, 'built');
           return;
         }
         if(js.type === 'train_update'){
-          // Generator: orange
           updateChipsOnProgress(js.from, js.to, js.progress);
           updateTotalProgress(js.from, js.to, js.progress);
           moveTrain(js.train_id, js.from, js.to, js.progress, 'gen');
           return;
         }
-        log('[ws] ' + ev.data);
-      }catch(e){ log('[ws] ' + ev.data); }
+      }catch(e){}
     });
 
-    /* chips & progress (highlight origin when entering, dest when nearly arrived) */
     function updateChipsOnProgress(origin, dest, segProgress){
       const pathBox = document.getElementById('pathChips');
       if(!pathBox) return;
@@ -381,7 +341,6 @@
       totalPct.textContent = pct.toFixed(1) + '%';
     }
 
-    /* train movement (no text on icon) */
     function moveTrain(trainId, origin, dest, segProgress, source){
       const a = activeRoute.nameToLL.get(String(origin).toLowerCase());
       const b = activeRoute.nameToLL.get(String(dest).toLowerCase());
@@ -412,7 +371,6 @@
       }
     }
 
-    /* init */
     loadStations();
   </script>
 </body>

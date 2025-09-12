@@ -210,28 +210,40 @@ def import_fares(conn: sqlite3.Connection, data_dir: str) -> int:
 
 # ---------- import: routes (edges + per-edge minutes) ----------
 def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
-    """
-    Parse Route.csv where each row describes ONE line.
-    - Supports either "LINE [ A > B > ... ]" or "A, B, C, ...".
-    - Build edges only between adjacent stations WITHIN that row (bidirectional).
-    - Fill per-edge travel_time_min from Time.csv if available; otherwise default 1.0 (Dijkstra weight only).
-    """
     route_csv = _csv_path(data_dir, "Route.csv")
     if not route_csv or not os.path.exists(route_csv):
         print("[routes] Route.csv not found, skip.")
         return 0
-
     time_csv = _csv_path(data_dir, "Time.csv")
 
-    # name -> id (normalized)
+    # name -> id（keep parentheses）
     name_to_id: Dict[str, int] = {}
     for r in conn.execute("SELECT station_id, name FROM stations"):
         name_to_id[_name_key(r["name"])] = int(r["station_id"])
-
     def id_of(nm: str) -> Optional[int]:
         return name_to_id.get(_name_key(nm))
 
-    # ---- load Time.csv matrix into map (OD total minutes) ----
+    # ---------- 1) 仅按 Route.csv 顺序连相邻边（双向） ----------
+    seq_edges: Set[Tuple[int, int]] = set()
+    with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        for raw_row in reader:
+            # 只按逗号序列；如果你存了 [ A > B > ... ] 也可按之前逻辑加一段解析
+            seq = [c.strip() for c in raw_row if c and c.strip()]
+            if len(seq) < 2:
+                continue
+            for a, b in zip(seq, seq[1:]):
+                u, v = id_of(a), id_of(b)
+                if not u or not v:
+                    continue
+                seq_edges.add((u, v))
+                seq_edges.add((v, u))
+
+    if not seq_edges:
+        print("[routes] No edges parsed from Route.csv.")
+        return 0
+
+    # ---------- 2) Time.csv 只作为相邻边的分钟数查表 ----------
     time_map: Dict[Tuple[str, str], float] = {}
     if time_csv and os.path.exists(time_csv):
         with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
@@ -258,72 +270,111 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
                         continue
                     time_map[(okey, dkey)] = t
 
-    # ---- robust row parser: extract a per-row ordered station sequence ----
-    CODE_RE = re.compile(r"^[A-Z]{2,}\s*$")  # e.g. KJL / SBK / PYL ...
-    BRACKET_RE = re.compile(r"\[(.+?)\]")    # capture content inside [ ... ]
+    # ---------- 3) 为“同名（去括号）”的一组站增加 0 分钟的换乘边 ----------
+    #    例：Pasar Seni (KJL) <-> Pasar Seni (SBK)
+    transfer_edges: Set[Tuple[int, int]] = set()
+    base_groups: Dict[str, List[int]] = defaultdict(list)
+    for r in conn.execute("SELECT station_id, name FROM stations"):
+        base_groups[_group_key(r["name"])].append(int(r["station_id"]))
+    for ids in base_groups.values():
+        if len(ids) >= 2:
+            # 完全图（双向），表示同一地名的站台可无代价互达
+            for i in range(len(ids)):
+                for j in range(i+1, len(ids)):
+                    a, b = ids[i], ids[j]
+                    transfer_edges.add((a, b))
+                    transfer_edges.add((b, a))
 
-    def parse_row_to_seq(raw_row: List[str]) -> List[str]:
-        """
-        Return an ordered list of station names for this row.
-        - If brackets exist, concatenate all bracketed sequences (split by '>').
-        - Else, treat the row as comma-separated names.
-        - Drop pure line codes like 'KJL', 'SBK', etc.
-        - Trim and keep non-empty cells only.
-        """
-        text = " ".join(c for c in raw_row if c).strip()
-        seq: List[str] = []
+    # ---------- 4) 写 routes ----------
+    rows = []
+    DEFAULT_MIN = 1.0
+    sel_name = "SELECT name FROM stations WHERE station_id=?"
 
-        bracket_chunks = BRACKET_RE.findall(text)
-        if bracket_chunks:
-            # May contain one or multiple [ A > B > ... ] sections
-            for chunk in bracket_chunks:
-                parts = [p.strip() for p in chunk.split(">") if p and p.strip()]
-                for p in parts:
-                    if not CODE_RE.match(p):
-                        seq.append(p)
-        else:
-            # Fallback: plain CSV row
-            for c in raw_row:
-                c = (c or "").strip()
-                if not c or CODE_RE.match(c):
-                    continue
-                seq.append(c)
+    # 序列边：用 Time.csv 的分钟；缺失用默认值
+    for u, v in seq_edges:
+        on = conn.execute(sel_name, (u,)).fetchone()["name"]
+        dn = conn.execute(sel_name, (v,)).fetchone()["name"]
+        tmin = time_map.get((_name_key(on), _name_key(dn)))
+        w = float(tmin) if (tmin is not None and tmin > 0) else DEFAULT_MIN
+        rows.append((u, v, w))
 
-        # Deduplicate accidental consecutive repeats inside a row (rare)
-        cleaned: List[str] = []
-        for s in seq:
-            if not cleaned or _name_key(cleaned[-1]) != _name_key(s):
-                cleaned.append(s)
-        return cleaned
+    # 换乘边：0 分钟
+    for u, v in transfer_edges:
+        rows.append((u, v, 0.0))
 
-    # ---- build adjacency only within each row ----
+    conn.executemany(
+        "INSERT OR REPLACE INTO routes(from_id, to_id, travel_time_min) VALUES (?,?,?)",
+        rows
+    )
+    print(f"[routes] imported edges: seq={len(seq_edges)} transfer={len(transfer_edges)} total_rows={len(rows)}")
+    return len(rows)
+    route_csv = _csv_path(data_dir, "Route.csv")
+    if not route_csv or not os.path.exists(route_csv):
+        print("[routes] Route.csv not found, skip.")
+        return 0
+
+    time_csv = _csv_path(data_dir, "Time.csv")
+
+    # name -> id
+    name_to_id: Dict[str, int] = {}
+    for r in conn.execute("SELECT station_id, name FROM stations"):
+        name_to_id[_name_key(r["name"])] = int(r["station_id"])
+    def id_of(nm: str) -> Optional[int]:
+        return name_to_id.get(_name_key(nm))
+
+    # ---------- 1) parse Route.csv ----------
     edges: Set[Tuple[int, int]] = set()
     with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.reader(f)
         for raw_row in reader:
-            seq = parse_row_to_seq(raw_row)
+            seq = [c.strip() for c in raw_row if c and c.strip()]
             if len(seq) < 2:
                 continue
-            # connect adjacent stations in THIS row only (bidirectional)
             for a, b in zip(seq, seq[1:]):
                 u, v = id_of(a), id_of(b)
                 if not u or not v:
                     continue
                 edges.add((u, v))
-                edges.add((v, u))
+                edges.add((v, u))  # 双向
 
     if not edges:
         print("[routes] No edges parsed from Route.csv.")
         return 0
 
-    # ---- write into routes with per-edge minutes from time_map when available ----
-    rows = []
-    DEFAULT_MIN = 1.0  # fallback for missing time (Dijkstra weight only)
-    select_name = "SELECT name FROM stations WHERE station_id=?"
+    # ---------- 2) build time map from Time.csv ----------
+    time_map: Dict[Tuple[str, str], float] = {}
+    if time_csv and os.path.exists(time_csv):
+        with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
+            treader = csv.reader(tf)
+            theader = next(treader, [])
+            dest_names = [h.strip() for h in theader[1:] if h and h.strip()]
+            dest_keys  = [_name_key(h) for h in dest_names]
+            for row in treader:
+                if not row:
+                    continue
+                oname = (row[0] or "").strip()
+                if not oname:
+                    continue
+                okey = _name_key(oname)
+                for j, dkey in enumerate(dest_keys, start=1):
+                    if j >= len(row):
+                        continue
+                    cell = str(row[j]).strip()
+                    if not cell or cell in {"-", "NA", "N/A"}:
+                        continue
+                    try:
+                        t = float(cell)
+                    except ValueError:
+                        continue
+                    time_map[(okey, dkey)] = t
 
+    # ---------- 3) write only edges from Route.csv ----------
+    rows = []
+    DEFAULT_MIN = 1.0
+    sel_name = "SELECT name FROM stations WHERE station_id=?"
     for u, v in edges:
-        on = conn.execute(select_name, (u,)).fetchone()["name"]
-        dn = conn.execute(select_name, (v,)).fetchone()["name"]
+        on = conn.execute(sel_name, (u,)).fetchone()["name"]
+        dn = conn.execute(sel_name, (v,)).fetchone()["name"]
         tmin = time_map.get((_name_key(on), _name_key(dn)))
         w = float(tmin) if (tmin is not None and tmin > 0) else DEFAULT_MIN
         rows.append((u, v, w))
@@ -332,7 +383,7 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
         "INSERT OR REPLACE INTO routes(from_id, to_id, travel_time_min) VALUES (?,?,?)",
         rows
     )
-    print(f"[routes] imported edges (adjacent-only, directed): {len(rows)}")
+    print(f"[routes] imported edges from Route.csv only: {len(rows)}")
     return len(rows)
     route_csv = _csv_path(data_dir, "Route.csv")
     if not route_csv or not os.path.exists(route_csv):
@@ -346,32 +397,46 @@ def import_routes(conn: sqlite3.Connection, data_dir: str) -> int:
     def id_of(nm: str) -> Optional[int]:
         return name_to_id.get(_name_key(nm))
 
+    # collect edges strictly within each sequence; never cross sequences
     edges: Set[Tuple[int, int]] = set()
+
+    BRACKET_ALL = re.compile(r"\[(.+?)\]")
     with open(route_csv, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.reader(f)
         for raw_row in reader:
             row_text = " ".join(c for c in raw_row if c).strip()
-            seq: List[str] = []
             if not row_text:
                 continue
-            m = re.search(r"\[(.+?)\]", row_text)
-            if m and ">" in m.group(1):
-                seq = [p.strip() for p in m.group(1).split(">") if p.strip()]
+
+            seq_list: List[List[str]] = []
+
+            # 1) support multiple [ ... ] groups in one row
+            groups = [m.group(1) for m in BRACKET_ALL.finditer(row_text)]
+            if groups:
+                for g in groups:
+                    seq = [p.strip() for p in g.split(">") if p and p.strip()]
+                    if len(seq) >= 2:
+                        seq_list.append(seq)
             else:
+                # 2) fallback: treat the whole row as a single comma-separated sequence
                 seq = [c.strip() for c in raw_row if c and c.strip()]
-            if len(seq) < 2:
-                continue
-            for a, b in zip(seq, seq[1:]):
-                u, v = id_of(a), id_of(b)
-                if not u or not v:
-                    continue
-                edges.add((u, v))
-                edges.add((v, u))
+                if len(seq) >= 2:
+                    seq_list.append(seq)
+
+            # add edges per sequence (bidirectional)
+            for seq in seq_list:
+                for a, b in zip(seq, seq[1:]):
+                    u, v = id_of(a), id_of(b)
+                    if not u or not v:
+                        continue
+                    edges.add((u, v))
+                    edges.add((v, u))
 
     if not edges:
         print("[routes] No edges parsed from Route.csv.")
         return 0
 
+    # per-edge minutes from Time.csv (only used for adjacent edges we just built)
     time_map: Dict[Tuple[str, str], float] = {}
     if time_csv and os.path.exists(time_csv):
         with open(time_csv, "r", encoding="utf-8-sig", newline="") as tf:
@@ -548,11 +613,11 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
     total_stops counts collapsed interchanges as one stop
     """
     adj: Dict[int, List[Tuple[int, float]]] = defaultdict(list)
-    cur = conn.execute("SELECT from_id, to_id, COALESCE(travel_time_min, 1) AS w FROM routes")
+    cur = conn.execute("SELECT from_id, to_id, COALESCE(travel_time_min, 0) AS w FROM routes")
     for row in cur.fetchall():
         u, v, w = int(row["from_id"]), int(row["to_id"]), float(row["w"])
-        if w <= 0:
-            w = 1.0
+        if w < 0:
+            w = 0.0
         adj[u].append((v, w))
 
     id2name = {int(r["station_id"]): str(r["name"]) for r in conn.execute("SELECT station_id, name FROM stations")}
@@ -582,8 +647,8 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
         names = [id2name[i] for i in path]
         names_collapsed = _collapse_stops(names)
         return {
-            "path_ids": path,                      # keep original ids
-            "path_names": names,                   # keep original names
+            "path_ids": path,
+            "path_names": names,
             "total_stops": max(0, len(names_collapsed) - 1),
             "total_time": None
         }
@@ -620,8 +685,8 @@ def get_route_shortest(conn: sqlite3.Connection, origin_id: int, destination_id:
         total_sum = float(dist.get(destination_id, 0.0))
         direct = get_direct_time(conn, origin_id, destination_id)
         return {
-            "path_ids": path,                      # keep original ids
-            "path_names": names,                   # keep original names
+            "path_ids": path,
+            "path_names": names,
             "total_stops": max(0, len(names_collapsed) - 1),
             "total_time": float(direct if direct is not None else total_sum)
         }

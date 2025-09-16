@@ -1,6 +1,6 @@
 # Metro Realtime System 🚇
-A real-time metro routing and fare web application built with Flask (Python), SQLite, and WebSockets.
-It allows users to plan routes (fewest stops / shortest time), check fares, and even watch live train simulations on an interactive map.
+- A real-time metro routing and fare web application built with Flask (Python), SQLite, and WebSockets.
+- It allows users to plan routes (fewest stops / shortest time), check fares, and even watch live train simulations on an interactive map.
 
 ## ✨ Features
 ### Route Planning: 
@@ -40,8 +40,8 @@ python -m venv venv
 ```
 ### macOS / Linux
 ```bash
--- python3 -m venv venv
--- source venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 ```
 
 ## 📚 Install Dependencies
@@ -112,6 +112,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 ## 📁 Project Structure
+```text
 metro_realtime_system/
 ├── app.py              # Flask entry point
 ├── database.py         # SQLite connection & setup
@@ -125,3 +126,4 @@ metro_realtime_system/
 ├── Time.csv
 ├── stations_coords.csv
 └── metro.db            # Auto-generated database
+```

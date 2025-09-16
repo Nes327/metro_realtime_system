@@ -2,6 +2,8 @@
 - A real-time metro routing and fare web application built with Flask (Python), SQLite, and WebSockets.
 - It allows users to plan routes (fewest stops / shortest time), check fares, and even watch live train simulations on an interactive map.
 
+
+
 ## ✨ Features
 ### Route Planning: 
 Find the optimal route by either fewest stops or shortest travel time.
@@ -11,6 +13,8 @@ Instantly calculate the fare between two stations.
 Watch animated trains move in real-time via WebSockets.
 ### Interactive Frontend: 
 Simple kiosk-like interface built with HTML + JavaScript (Leaflet for maps).
+
+
 
 ## 📦 Prerequisites
 ### Windows
@@ -25,12 +29,16 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 brew install python
 ```
 
+
+
 ## 📥 Get the Code
 Clone the repo:
 ```bash
 git clone <https://github.com/Nes327/metro_realtime_system>
 cd metro_realtime_system
 ```
+
+
 
 ## 🛠️ Setup Virtual Environment
 ### Windows (PowerShell)
@@ -44,6 +52,8 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
+
+
 ## 📚 Install Dependencies
 ### With the venv active:
 ```bash
@@ -54,6 +64,8 @@ pip install -r requirements.txt
 pip install Flask==2.3.3 Flask-Sock==0.7.0 simple-websocket==0.10.1 pandas openpyxl
 ```
 
+
+
 ## 🗂️ Data Files
 The app loads data from these files (included in the repo):
 - Fare.csv
@@ -61,6 +73,8 @@ The app loads data from these files (included in the repo):
 - Time.csv
 - stations_coords.csv
 If metro.db doesn’t exist, it will be created and populated automatically on first run.
+
+
 
 ## 🚀 Run the Server
 ### Default (port 5000)
@@ -74,6 +88,8 @@ python -c "from app import create_app; app=create_app(); app.run(host='127.0.0.1
 ```
 Open: http://127.0.0.1:5050
 
+
+
 ## 🖥️ Using the App
 Choose From and To stations.
 Select mode: stops (fewest stops) or time (shortest time).
@@ -81,11 +97,15 @@ Click Plan Route → displays path + fare.
 Click Start Simulation → watch trains animate in real-time.
 Realtime logs will show WebSocket updates.
 
+
+
 ## 🔄 Optional: External Realtime Generator
 Run in a separate terminal:
 ```bash
 python data_generator.py
 ```
+
+
 
 ## 🌐 Example API Endpoints
 - List stations:
@@ -101,6 +121,8 @@ GET /fare_by_name?from=KLCC&to=Kajang
 GET /route_by_name?from=KLCC&to=Kajang&mode=time
 ```
 
+
+
 ## 🛑 Troubleshooting
 PowerShell: “source not recognized” → use:
 ```powershell
@@ -110,6 +132,8 @@ Permission error on venv activation → run:
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
+
+
 
 ## 📁 Project Structure
 ```text
